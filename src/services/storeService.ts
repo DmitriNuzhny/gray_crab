@@ -4,10 +4,14 @@ import { Product } from '../types/product';
 export class StoreService {
   private baseUrl: string;
   private apiKey: string;
+  private graphqlUrl: string;
 
   constructor() {
     this.baseUrl = process.env.STORE_API_URL || '';
     this.apiKey = process.env.STORE_API_KEY || '';
+    
+    const shopUrl = this.baseUrl.split('/admin')[0];
+    this.graphqlUrl = `${shopUrl}/admin/api/2024-01/graphql.json`;
     
     if (!this.baseUrl) {
       throw new Error('STORE_API_URL environment variable is not set');
@@ -22,6 +26,44 @@ export class StoreService {
       'X-Shopify-Access-Token': this.apiKey,
       'Content-Type': 'application/json'
     };
+  }
+
+  async getAllSalesChannels(): Promise<string[]> {
+    try {
+      const query = `
+        {
+          publications(first: 10) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `;
+
+      const response = await axios.post(
+        this.graphqlUrl,
+        { query },
+        { headers: this.getHeaders() }
+      );
+
+      if (response.data.errors) {
+        throw new Error(response.data.errors[0].message);
+      }
+
+      const channels = response.data.data.publications.edges.map(
+        (edge: any) => edge.node.name
+      );
+
+      return channels;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(`Failed to fetch sales channels: ${error.message}`);
+      }
+      throw new Error('Failed to fetch sales channels');
+    }
   }
 
   async getAllProducts(): Promise<Product[]> {
@@ -58,25 +100,104 @@ export class StoreService {
     }
   }
 
+  private async getPublicationIds(): Promise<Map<string, string>> {
+    const query = `
+      {
+        publications(first: 10) {
+          edges {
+            node {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await axios.post(
+      this.graphqlUrl,
+      { query },
+      { headers: this.getHeaders() }
+    );
+
+    if (response.data.errors) {
+      throw new Error(response.data.errors[0].message);
+    }
+
+    const publicationMap = new Map<string, string>();
+    response.data.data.publications.edges.forEach((edge: any) => {
+      publicationMap.set(edge.node.name, edge.node.id);
+    });
+
+    return publicationMap;
+  }
+
   async updateProductSalesChannels(productId: string, salesChannels: string[]): Promise<Product> {
     try {
-      const baseUrl = this.baseUrl.replace('/products.json', '');
-      const url = `${baseUrl}/products/${productId}.json`;
+      // First, get all publication IDs and their names
+      const publicationMap = await this.getPublicationIds();
       
-      const response = await axios.put(
-        url,
-        {
-          product: {
-            id: productId,
-            salesChannels: salesChannels
+      // For each sales channel, we need to publish/unpublish the product
+      for (const [channelName, publicationId] of publicationMap.entries()) {
+        const shouldPublish = salesChannels.includes(channelName);
+        
+        const mutation = shouldPublish ? `
+          mutation {
+            publishablePublish(
+              id: "${productId}",
+              input: {
+                publicationId: "${publicationId}"
+              }
+            ) {
+              publishable {
+                id
+              }
+              userErrors {
+                field
+                message
+              }
+            }
           }
-        },
-        { headers: this.getHeaders() }
-      );
-      return response.data.product;
+        ` : `
+          mutation {
+            publishableUnpublish(
+              id: "${productId}",
+              input: {
+                publicationId: "${publicationId}"
+              }
+            ) {
+              publishable {
+                id
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        const response = await axios.post(
+          this.graphqlUrl,
+          { query: mutation },
+          { headers: this.getHeaders() }
+        );
+
+        if (response.data.errors) {
+          throw new Error(response.data.errors[0].message);
+        }
+
+        const result = response.data.data;
+        if (result.userErrors?.length > 0) {
+          throw new Error(`Failed to update publication status: ${result.userErrors[0].message}`);
+        }
+      }
+
+      // Return the updated product
+      return this.getProduct(productId) as Promise<Product>;
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        throw new Error(`Failed to update product: ${error.message}`);
+        throw new Error(`Failed to update product sales channels: ${error.message}`);
       }
       throw new Error('Failed to update product sales channels');
     }

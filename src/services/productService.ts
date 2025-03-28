@@ -8,6 +8,10 @@ export class ProductService {
     this.storeService = new StoreService();
   }
 
+  async getAllSalesChannels(): Promise<string[]> {
+    return this.storeService.getAllSalesChannels();
+  }
+
   async bulkUpdateSalesChannels(request: BulkUpdateRequest): Promise<UpdateResponse> {
     const { productIds, salesChannels } = request;
     const updatedProducts: string[] = [];

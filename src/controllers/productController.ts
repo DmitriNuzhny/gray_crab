@@ -5,6 +5,23 @@ import { BulkUpdateRequest, Product } from '../types/product';
 const productService = new ProductService();
 
 export class ProductController {
+  async getAllSalesChannels(req: Request, res: Response) {
+    try {
+      const salesChannels = await productService.getAllSalesChannels();
+      res.json({
+        success: true,
+        message: 'Sales channels fetched successfully',
+        data: salesChannels
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error fetching sales channels',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
   async bulkUpdateSalesChannels(req: Request, res: Response) {
     try {
       const request: BulkUpdateRequest = req.body;
