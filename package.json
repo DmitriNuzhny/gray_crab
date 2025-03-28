@@ -12,7 +12,9 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "@types/axios": "^0.14.4",
     "@types/dotenv": "^8.2.3",
+    "axios": "^1.8.4",
     "dotenv": "^16.4.7",
     "express": "^4.18.2"
   },

@@ -1,6 +1,6 @@
 # Product Sales Channel Bulk Update API
 
-A Node.js backend API for managing product sales channels with bulk update capabilities.
+A Node.js backend API for managing product sales channels with bulk update capabilities. This API acts as a proxy to your store's API, providing bulk update functionality for product sales channels.
 
 ## Setup
 
@@ -14,10 +14,11 @@ yarn install
 cp .env.example .env
 ```
 
-3. Update the `.env` file with your secure API key:
+3. Update the `.env` file with your store API configuration:
 ```
 PORT=3000
-ADMIN_API_KEY=your-secure-api-key-here
+STORE_API_URL=https://your-store-api.com
+STORE_API_KEY=your-store-api-key-here
 ```
 
 4. Start the development server:
@@ -37,35 +38,17 @@ yarn start
 
 ## API Endpoints
 
-### Public Endpoints
-
-#### Get All Products
+### Get All Products
 - **GET** `/api/products`
+- Fetches all products from the store API
 
-#### Get Single Product
+### Get Single Product
 - **GET** `/api/products/:id`
+- Fetches a single product from the store API
 
-### Protected Admin Endpoints
-
-These endpoints require an API key to be included in the request header:
-```
-X-API-Key: your-api-key-here
-```
-
-#### Create Product
-- **POST** `/api/products`
-- Request body:
-```json
-{
-  "name": "Product Name",
-  "price": 99.99,
-  "salesChannels": ["online", "retail"],
-  "description": "Product description"
-}
-```
-
-#### Bulk Update Sales Channels
+### Bulk Update Sales Channels
 - **POST** `/api/products/bulk-update-sales-channels`
+- Updates sales channels for multiple products in the store
 - Request body:
 ```json
 {
@@ -91,13 +74,17 @@ The API returns appropriate HTTP status codes:
 - 200: Success
 - 201: Created
 - 400: Bad Request
-- 401: Unauthorized (Invalid or missing API key)
 - 404: Not Found
 - 500: Internal Server Error
 
-## Security
+## Store API Integration
 
-- Admin operations require a valid API key
-- API key should be kept secure and never shared
-- Use HTTPS in production
-- Consider implementing rate limiting for production use 
+This API acts as a proxy to your store's API, providing the following features:
+- Fetches products directly from the store
+- Updates product sales channels in the store
+- Handles bulk operations efficiently
+- Provides error handling and retry logic
+
+Make sure to configure the following environment variables:
+- `STORE_API_URL`: The base URL of your store's API
+- `STORE_API_KEY`: The authentication key for your store's API 
