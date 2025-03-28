@@ -19,7 +19,6 @@ export class ProductController {
       const result = await productService.bulkUpdateSalesChannels(request);
       res.json(result);
     } catch (error) {
-      console.error('Error in bulkUpdateSalesChannels:', error);
       res.status(500).json({
         success: false,
         message: 'Error updating product sales channels'
@@ -30,26 +29,21 @@ export class ProductController {
   async getProduct(req: Request, res: Response) {
     try {
       const productId = req.params.id;
-      console.log('Fetching product with ID:', productId);
-      
       const product = await productService.getProduct(productId);
       
       if (!product) {
-        console.log('Product not found:', productId);
         return res.status(404).json({
           success: false,
           message: 'Product not found'
         });
       }
 
-      console.log('Product found:', product);
       res.json({
         success: true,
         message: 'Product fetched successfully',
         data: product
       });
     } catch (error) {
-      console.error('Error in getProduct:', error);
       res.status(500).json({
         success: false,
         message: 'Error fetching product',
@@ -60,17 +54,13 @@ export class ProductController {
 
   async getAllProducts(req: Request, res: Response) {
     try {
-      console.log('Fetching all products');
       const products = await productService.getAllProducts();
-      console.log(`Found ${products.length} products`);
-      
       res.json({
         success: true,
         message: 'Products fetched successfully',
         data: products
       });
     } catch (error) {
-      console.error('Error in getAllProducts:', error);
       res.status(500).json({
         success: false,
         message: 'Error fetching products',
