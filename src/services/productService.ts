@@ -4,8 +4,8 @@ import { StoreService } from './storeService';
 export class ProductService {
   private storeService: StoreService;
 
-  constructor() {
-    this.storeService = new StoreService();
+  constructor(storeService: StoreService) {
+    this.storeService = storeService;
   }
 
   async getAllSalesChannels(): Promise<string[]> {
@@ -36,16 +36,27 @@ export class ProductService {
     };
   }
 
-  async getProduct(productId: string): Promise<Product | null> {
-    return this.storeService.getProduct(productId);
+  async getProduct(id: string): Promise<Product | null> {
+    return this.storeService.getProduct(id);
   }
 
   async getAllProducts(): Promise<Product[]> {
-    return this.storeService.getAllProducts();
+    const productIds = await this.storeService.getAllProducts();
+    const products: Product[] = [];
+    
+    // Fetch full product details for each ID
+    for (const id of productIds) {
+      const product = await this.storeService.getProduct(id);
+      if (product) {
+        products.push(product);
+      }
+    }
+    
+    return products;
   }
 
-  async createProduct(product: Omit<Product, 'id'>): Promise<Product> {
-    // Note: This method is not implemented as it should be handled by the store API
-    throw new Error('Create product operation should be handled by the store API');
+  async createProduct(product: Product): Promise<Product> {
+    // Implement product creation logic here
+    throw new Error('Method not implemented');
   }
 } 

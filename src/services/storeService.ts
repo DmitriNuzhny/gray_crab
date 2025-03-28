@@ -66,41 +66,63 @@ export class StoreService {
     }
   }
 
-  async getAllProducts(): Promise<string[]> {
-    try {
-      const query = `
-        query {
-          products(first: 250) {
-            edges {
-              node {
-                id
-              }
-              cursor
+  private async getAllProductsWithPagination(cursor?: string): Promise<{ ids: string[], hasNextPage: boolean, lastCursor: string }> {
+    const query = `
+      query {
+        products(first: 250${cursor ? `, after: "${cursor}"` : ''}) {
+          edges {
+            node {
+              id
             }
-            pageInfo {
-              hasNextPage
-            }
+            cursor
+          }
+          pageInfo {
+            hasNextPage
           }
         }
-      `;
+      }
+    `;
 
-      const response = await axios.post(
-        this.graphqlUrl,
-        { query },
-        { headers: this.getHeaders() }
-      );
+    const response = await axios.post(
+      this.graphqlUrl,
+      { query },
+      { headers: this.getHeaders() }
+    );
 
-      if (response.data.errors) {
-        throw new Error(response.data.errors[0].message);
+    if (response.data.errors) {
+      throw new Error(response.data.errors[0].message);
+    }
+
+    const edges = response.data.data.products.edges;
+    const hasNextPage = response.data.data.products.pageInfo.hasNextPage;
+    const lastCursor = edges[edges.length - 1]?.cursor;
+
+    const productIds = edges.map((edge: any) => {
+      const globalId = edge.node.id;
+      return globalId.split('/').pop();
+    });
+
+    return {
+      ids: productIds,
+      hasNextPage,
+      lastCursor
+    };
+  }
+
+  async getAllProducts(): Promise<string[]> {
+    try {
+      const allProductIds: string[] = [];
+      let hasNextPage = true;
+      let cursor: string | undefined;
+
+      while (hasNextPage) {
+        const result = await this.getAllProductsWithPagination(cursor);
+        allProductIds.push(...result.ids);
+        hasNextPage = result.hasNextPage;
+        cursor = result.lastCursor;
       }
 
-      // Extract just the numeric IDs from the GraphQL global IDs
-      const productIds = response.data.data.products.edges.map((edge: any) => {
-        const globalId = edge.node.id; // Format: gid://shopify/Product/123456789
-        return globalId.split('/').pop(); // Get just the numeric ID
-      });
-
-      return productIds;
+      return allProductIds;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         throw new Error(`Failed to fetch products: ${error.message}`);
@@ -236,6 +258,46 @@ export class StoreService {
         throw new Error(`Failed to update product sales channels: ${error.message}`);
       }
       throw new Error('Failed to update product sales channels');
+    }
+  }
+
+  async bulkUpdateSalesChannels(salesChannels: string[]): Promise<{ 
+    success: boolean; 
+    message: string; 
+    updatedProducts: string[]; 
+    failedProducts: string[]; 
+  }> {
+    try {
+      const productIds = await this.getAllProducts();
+      const updatedProducts: string[] = [];
+      const failedProducts: string[] = [];
+      const batchSize = 10; // Process 10 products at a time
+
+      // Process products in batches
+      for (let i = 0; i < productIds.length; i += batchSize) {
+        const batch = productIds.slice(i, i + batchSize);
+        const updatePromises = batch.map(async (productId) => {
+          try {
+            await this.updateProductSalesChannels(productId, salesChannels);
+            updatedProducts.push(productId);
+          } catch (error) {
+            failedProducts.push(productId);
+          }
+        });
+
+        await Promise.all(updatePromises);
+      }
+
+      const message = `Updated ${updatedProducts.length} products${failedProducts.length > 0 ? `, ${failedProducts.length} products failed` : ''}`;
+      
+      return {
+        success: failedProducts.length === 0,
+        message,
+        updatedProducts,
+        failedProducts
+      };
+    } catch (error) {
+      throw new Error(`Failed to bulk update sales channels: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 } 
