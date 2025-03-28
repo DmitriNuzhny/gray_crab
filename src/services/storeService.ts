@@ -66,12 +66,41 @@ export class StoreService {
     }
   }
 
-  async getAllProducts(): Promise<Product[]> {
+  async getAllProducts(): Promise<string[]> {
     try {
-      const response = await axios.get(this.baseUrl, {
-        headers: this.getHeaders()
+      const query = `
+        query {
+          products(first: 250) {
+            edges {
+              node {
+                id
+              }
+              cursor
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+      `;
+
+      const response = await axios.post(
+        this.graphqlUrl,
+        { query },
+        { headers: this.getHeaders() }
+      );
+
+      if (response.data.errors) {
+        throw new Error(response.data.errors[0].message);
+      }
+
+      // Extract just the numeric IDs from the GraphQL global IDs
+      const productIds = response.data.data.products.edges.map((edge: any) => {
+        const globalId = edge.node.id; // Format: gid://shopify/Product/123456789
+        return globalId.split('/').pop(); // Get just the numeric ID
       });
-      return response.data.products;
+
+      return productIds;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         throw new Error(`Failed to fetch products: ${error.message}`);
@@ -137,6 +166,9 @@ export class StoreService {
       // First, get all publication IDs and their names
       const publicationMap = await this.getPublicationIds();
       
+      // Format the product ID for GraphQL
+      const gqlProductId = `gid://shopify/Product/${productId}`;
+      
       // For each sales channel, we need to publish/unpublish the product
       for (const [channelName, publicationId] of publicationMap.entries()) {
         const shouldPublish = salesChannels.includes(channelName);
@@ -144,13 +176,15 @@ export class StoreService {
         const mutation = shouldPublish ? `
           mutation {
             publishablePublish(
-              id: "${productId}",
+              id: "${gqlProductId}",
               input: {
                 publicationId: "${publicationId}"
               }
             ) {
               publishable {
-                id
+                ... on Product {
+                  id
+                }
               }
               userErrors {
                 field
@@ -161,13 +195,15 @@ export class StoreService {
         ` : `
           mutation {
             publishableUnpublish(
-              id: "${productId}",
+              id: "${gqlProductId}",
               input: {
                 publicationId: "${publicationId}"
               }
             ) {
               publishable {
-                id
+                ... on Product {
+                  id
+                }
               }
               userErrors {
                 field
