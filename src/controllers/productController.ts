@@ -51,6 +51,32 @@ export class ProductController {
     }
   };
 
+  bulkUpdateSalesChannelsByIds = async (req: Request, res: Response) => {
+    try {
+      const { productIds, salesChannels } = req.body;
+
+      if (!Array.isArray(productIds) || !Array.isArray(salesChannels)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'productIds and salesChannels must be arrays' 
+        });
+      }
+
+      const result = await this.productService.bulkUpdateSalesChannels({
+        productIds,
+        salesChannels
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        success: false, 
+        message: error instanceof Error ? error.message : 'Failed to bulk update sales channels',
+        updatedProducts: [],
+        failedProducts: []
+      });
+    }
+  };
+
   getProduct = async (req: Request, res: Response) => {
     try {
       const productId = req.params.id;

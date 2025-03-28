@@ -11,6 +11,7 @@ router.get('/:id', productController.getProduct.bind(productController));
 
 // POST endpoints
 router.post('/bulk-update-sales-channels', productController.bulkUpdateSalesChannels.bind(productController));
+router.post('/bulk-update-sales-channels-by-ids', productController.bulkUpdateSalesChannelsByIds.bind(productController));
 router.post('/:id/sales-channels', productController.updateProductSalesChannels.bind(productController));
 
 export default router; 

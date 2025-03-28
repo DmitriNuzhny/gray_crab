@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Product } from '../types/product';
+import { env } from '../config/env';
 
 export class StoreService {
   private baseUrl: string;
@@ -7,9 +8,12 @@ export class StoreService {
   private graphqlUrl: string;
 
   constructor() {
-    this.baseUrl = process.env.STORE_API_URL || '';
-    this.apiKey = process.env.STORE_API_KEY || '';
+    this.baseUrl = env.storeApiUrl;
+    this.apiKey = env.storeApiKey;
     
+    // Extract shop domain from the REST API URL
+    // From: https://your-store.myshopify.com/admin/api/2024-04/products.json
+    // To: https://your-store.myshopify.com/admin/api/2024-01/graphql.json
     const shopUrl = this.baseUrl.split('/admin')[0];
     this.graphqlUrl = `${shopUrl}/admin/api/2024-01/graphql.json`;
     
