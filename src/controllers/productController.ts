@@ -327,14 +327,14 @@ export class ProductController {
       const productIds = await this.storeService.getProductsWithGoogleYouTubeErrors();
       res.json({
         success: true,
-        message: 'Products with Google & YouTube publishing errors fetched successfully',
+        message: 'Products with Google & YouTube channel but missing required attributes fetched successfully',
         count: productIds.length,
         data: productIds
       });
     } catch (error) {
       res.status(500).json({
         success: false,
-        message: 'Error fetching products with Google & YouTube publishing errors',
+        message: 'Error fetching products with Google & YouTube channel missing required attributes',
         error: error instanceof Error ? error.message : 'Unknown error'
       });
     }

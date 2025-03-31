@@ -266,8 +266,17 @@ export class StoreService {
 
   async getProduct(productId: string): Promise<Product | null> {
     try {
-      const baseUrl = this.baseUrl.replace('/products.json', '');
-      const url = `${baseUrl}/products/${productId}.json`;
+      // Extract the shop domain and API version from the base URL
+      // Format: https://your-store.myshopify.com/admin/api/2024-04/products.json
+      const urlParts = this.baseUrl.match(/(https:\/\/.*\.myshopify\.com\/admin\/api\/[^\/]+)\//);
+      if (!urlParts || urlParts.length < 2) {
+        throw new Error('Invalid shop URL format');
+      }
+      
+      const baseApiUrl = urlParts[1];
+      const url = `${baseApiUrl}/products/${productId}.json`;
+      
+      console.log(`Fetching product from: ${url}`);
       
       const response = await axios.get(url, {
         headers: this.getHeaders()
@@ -275,6 +284,7 @@ export class StoreService {
       return response.data.product;
     } catch (error) {
       if (axios.isAxiosError(error)) {
+        console.error(`Error fetching product ${productId}:`, error.response?.status, error.response?.data);
         if (error.response?.status === 404) {
           return null;
         }
@@ -753,26 +763,26 @@ export class StoreService {
 
   async getProductsWithGoogleYouTubeErrors(): Promise<string[]> {
     try {
-      console.log(`Starting to fetch products with Google & YouTube publishing errors...`);
+      console.log(`Starting to fetch products with missing or incorrect Google & YouTube attributes...`);
       
       // We'll use bulk queries with pagination to efficiently process products
-      const productsWithErrors: string[] = [];
+      const productsWithIssues: string[] = [];
       let hasNextPage = true;
       let cursor: string | undefined;
       const pageSize = 50; // Process 50 products at a time in bulk
       
-      // Get publication IDs for Google and YouTube
+      // Get publication ID for Google & YouTube
       const publicationMap = await this.getPublicationIds();
-      const googlePublicationId = Array.from(publicationMap.entries())
-        .find(([name]) => name.toLowerCase().includes('google'))?.[1];
-      const youtubePublicationId = Array.from(publicationMap.entries())
-        .find(([name]) => name.toLowerCase().includes('youtube'))?.[1];
+      const googleYoutubePublication = Array.from(publicationMap.entries())
+        .find(([name]) => name.toLowerCase().includes('google') && name.toLowerCase().includes('youtube'));
         
-      if (!googlePublicationId && !youtubePublicationId) {
-        throw new Error('Could not find Google or YouTube publication IDs');
+      if (!googleYoutubePublication) {
+        throw new Error('Could not find Google & YouTube publication ID');
       }
       
-      console.log(`Found publication IDs: Google=${googlePublicationId}, YouTube=${youtubePublicationId}`);
+      const googleYoutubePublicationId = googleYoutubePublication[1];
+      
+      console.log(`Found publication ID: Google & YouTube=${googleYoutubePublicationId}`);
       console.log(`Starting to query products in batches of ${pageSize}...`);
       
       // Process products in pages
@@ -789,16 +799,20 @@ export class StoreService {
                     productPublications(first: 20) {
                       edges {
                         node {
-                          publication {
+                          channel {
                             id
                             name
                           }
                           publishDate
                           isPublished
-                          publishingError {
-                            message
-                            code
-                          }
+                        }
+                      }
+                    }
+                    metafields(first: 10, namespace: "google") {
+                      edges {
+                        node {
+                          key
+                          value
                         }
                       }
                     }
@@ -836,23 +850,36 @@ export class StoreService {
               for (const product of products) {
                 const productId = product.node.id.split('/').pop();
                 const publications = product.node.productPublications?.edges || [];
+                const metafields = product.node.metafields?.edges || [];
                 
-                // Check for Google or YouTube publishing errors
-                for (const pub of publications) {
-                  const pubId = pub.node.publication.id;
-                  const isGoogleOrYouTube = 
-                    (googlePublicationId && pubId === googlePublicationId) ||
-                    (youtubePublicationId && pubId === youtubePublicationId);
+                // Check if product has Google & YouTube channel
+                const hasGoogleYoutubeChannel = publications.some((pub: any) => {
+                  const channelName = pub.node.channel?.name || '';
+                  return channelName.toLowerCase().includes('google') && channelName.toLowerCase().includes('youtube');
+                });
+                
+                // If product has the Google & YouTube channel, check required Google attributes
+                if (hasGoogleYoutubeChannel) {
+                  // Required Google attributes
+                  const requiredAttributes = ['google_product_category', 'color', 'size', 'gender', 'age_group'];
+                  const missingAttributes = [];
                   
-                  if (isGoogleOrYouTube && pub.node.publishingError) {
-                    // Found an error with Google or YouTube publishing
-                    productsWithErrors.push(productId);
-                    break; // No need to check other publications for this product
+                  // Check which attributes are missing or empty
+                  for (const attr of requiredAttributes) {
+                    const metafield = metafields.find((m: any) => m.node.key === attr);
+                    if (!metafield || !metafield.node.value.trim()) {
+                      missingAttributes.push(attr);
+                    }
+                  }
+                  
+                  // If any required attributes are missing, add to the list
+                  if (missingAttributes.length > 0) {
+                    productsWithIssues.push(productId);
                   }
                 }
               }
               
-              console.log(`Processed ${products.length} products, found ${productsWithErrors.length} with Google/YouTube errors so far`);
+              console.log(`Processed ${products.length} products, found ${productsWithIssues.length} with missing Google & YouTube attributes so far`);
             } else {
               console.log('No products returned in this batch, ending pagination');
               hasNextPage = false;
@@ -879,11 +906,11 @@ export class StoreService {
         }
       }
       
-      console.log(`Completed scan. Found ${productsWithErrors.length} products with Google/YouTube publishing errors.`);
-      return productsWithErrors;
+      console.log(`Completed scan. Found ${productsWithIssues.length} products with missing Google & YouTube attributes.`);
+      return productsWithIssues;
     } catch (error) {
       console.error('Error in getProductsWithGoogleYouTubeErrors:', error);
-      throw new Error(`Failed to fetch products with Google/YouTube errors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to fetch products with Google & YouTube attribute issues: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -895,16 +922,20 @@ export class StoreService {
     
     // Same implementation but with smaller batch size, simplified version of the main method
     // This is a fallback for when we encounter errors with larger batches
-    const productsWithErrors: string[] = [];
+    const productsWithIssues: string[] = [];
     let hasNextPage = true;
     let cursor = startCursor;
     
-    // Get publication IDs for Google and YouTube
+    // Get publication ID for Google & YouTube
     const publicationMap = await this.getPublicationIds();
-    const googlePublicationId = Array.from(publicationMap.entries())
-      .find(([name]) => name.toLowerCase().includes('google'))?.[1];
-    const youtubePublicationId = Array.from(publicationMap.entries())
-      .find(([name]) => name.toLowerCase().includes('youtube'))?.[1];
+    const googleYoutubePublication = Array.from(publicationMap.entries())
+      .find(([name]) => name.toLowerCase().includes('google') && name.toLowerCase().includes('youtube'));
+      
+    if (!googleYoutubePublication) {
+      throw new Error('Could not find Google & YouTube publication ID');
+    }
+    
+    const googleYoutubePublicationId = googleYoutubePublication[1];
       
     // Process products in pages
     while (hasNextPage) {
@@ -918,16 +949,20 @@ export class StoreService {
                 productPublications(first: 20) {
                   edges {
                     node {
-                      publication {
+                      channel {
                         id
                         name
                       }
                       publishDate
                       isPublished
-                      publishingError {
-                        message
-                        code
-                      }
+                    }
+                  }
+                }
+                metafields(first: 10, namespace: "google") {
+                  edges {
+                    node {
+                      key
+                      value
                     }
                   }
                 }
@@ -958,23 +993,36 @@ export class StoreService {
           for (const product of products) {
             const productId = product.node.id.split('/').pop();
             const publications = product.node.productPublications?.edges || [];
+            const metafields = product.node.metafields?.edges || [];
             
-            // Check for Google or YouTube publishing errors
-            for (const pub of publications) {
-              const pubId = pub.node.publication.id;
-              const isGoogleOrYouTube = 
-                (googlePublicationId && pubId === googlePublicationId) ||
-                (youtubePublicationId && pubId === youtubePublicationId);
+            // Check if product has Google & YouTube channel
+            const hasGoogleYoutubeChannel = publications.some((pub: any) => {
+              const channelName = pub.node.channel?.name || '';
+              return channelName.toLowerCase().includes('google') && channelName.toLowerCase().includes('youtube');
+            });
+            
+            // If product has the Google & YouTube channel, check required Google attributes
+            if (hasGoogleYoutubeChannel) {
+              // Required Google attributes
+              const requiredAttributes = ['google_product_category', 'color', 'size', 'gender', 'age_group'];
+              const missingAttributes = [];
               
-              if (isGoogleOrYouTube && pub.node.publishingError) {
-                // Found an error with Google or YouTube publishing
-                productsWithErrors.push(productId);
-                break; // No need to check other publications for this product
+              // Check which attributes are missing or empty
+              for (const attr of requiredAttributes) {
+                const metafield = metafields.find((m: any) => m.node.key === attr);
+                if (!metafield || !metafield.node.value.trim()) {
+                  missingAttributes.push(attr);
+                }
+              }
+              
+              // If any required attributes are missing, add to the list
+              if (missingAttributes.length > 0) {
+                productsWithIssues.push(productId);
               }
             }
           }
           
-          console.log(`Processed ${products.length} products, found ${productsWithErrors.length} with Google/YouTube errors so far`);
+          console.log(`Processed ${products.length} products, found ${productsWithIssues.length} with missing Google & YouTube attributes so far`);
         } else {
           hasNextPage = false;
         }
@@ -989,6 +1037,6 @@ export class StoreService {
       }
     }
     
-    return productsWithErrors;
+    return productsWithIssues;
   }
 } 
