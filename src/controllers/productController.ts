@@ -62,18 +62,159 @@ export class ProductController {
         });
       }
 
-      const result = await this.productService.bulkUpdateSalesChannels({
-        productIds,
-        salesChannels
+      // Set a longer timeout for large operations (15 minutes)
+      req.setTimeout(900000);
+      
+      // Send initial response to client
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
       });
-      res.json(result);
+      
+      // Start the update process
+      res.write(JSON.stringify({
+        status: 'processing',
+        message: `Starting update for ${productIds.length} products`,
+        timestamp: new Date().toISOString(),
+        total: productIds.length,
+        processed: 0,
+      }) + '\n');
+      
+      // Split into smaller batches for very large requests
+      // Process in chunks to update client with progress
+      const BATCH_SIZE = 250; // Reduced batch size for more frequent updates
+      let processed = 0;
+      let totalSuccesses = 0;
+      let totalFailures = 0;
+      const failureDetails = new Map();
+      
+      for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+        const batch = productIds.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(productIds.length / BATCH_SIZE);
+        
+        try {
+          // Send batch start notification
+          res.write(JSON.stringify({
+            status: 'batch_started',
+            message: `Processing batch ${batchNumber} of ${totalBatches}`,
+            timestamp: new Date().toISOString(),
+            batchSize: batch.length,
+            batchNumber,
+            totalBatches
+          }) + '\n');
+          
+          const result = await this.productService.bulkUpdateSalesChannels({
+            productIds: batch,
+            salesChannels
+          });
+          
+          processed += batch.length;
+          totalSuccesses += result.updatedProducts?.length || 0;
+          totalFailures += result.failedProducts?.length || 0;
+          
+          // Collect failure details
+          if (result.failedProducts && result.failedProducts.length > 0) {
+            // Extract error details from the message if available
+            const errorMatch = result.message.match(/Error summary:\n(.*)/s);
+            if (errorMatch && errorMatch[1]) {
+              const errorLines = errorMatch[1].split('\n');
+              errorLines.forEach(line => {
+                const matches = line.match(/- (.*): (\d+) products/);
+                if (matches) {
+                  const [_, errorType, count] = matches;
+                  failureDetails.set(
+                    errorType, 
+                    (failureDetails.get(errorType) || 0) + parseInt(count, 10)
+                  );
+                }
+              });
+            }
+          }
+          
+          // Send progress update
+          res.write(JSON.stringify({
+            status: 'batch_completed',
+            message: `Processed ${processed} of ${productIds.length} products`,
+            timestamp: new Date().toISOString(),
+            total: productIds.length,
+            processed,
+            successes: totalSuccesses,
+            failures: totalFailures,
+            batchResults: {
+              success: result.success,
+              updatedCount: result.updatedProducts?.length || 0,
+              failedCount: result.failedProducts?.length || 0,
+              batchNumber,
+              totalBatches
+            }
+          }) + '\n');
+        } catch (error) {
+          // Send error for this batch but continue processing
+          totalFailures += batch.length;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          
+          // Track the error
+          failureDetails.set(
+            errorMessage, 
+            (failureDetails.get(errorMessage) || 0) + batch.length
+          );
+          
+          res.write(JSON.stringify({
+            status: 'batch_error',
+            message: `Error processing batch ${batchNumber} of ${totalBatches}`,
+            error: errorMessage,
+            timestamp: new Date().toISOString(),
+            batchNumber,
+            totalBatches
+          }) + '\n');
+          
+          // Continue with next batch despite the error
+          processed += batch.length;
+        }
+        
+        // Add a small delay between batches to prevent client overload
+        if (i + BATCH_SIZE < productIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      // Format error details for the final response
+      const errorSummary = Array.from(failureDetails.entries())
+        .map(([error, count]) => `- ${error}: ${count} products`)
+        .join('\n');
+      
+      // Send final completion message
+      res.write(JSON.stringify({
+        status: 'completed',
+        message: `Completed processing ${processed} products`,
+        timestamp: new Date().toISOString(),
+        total: productIds.length,
+        processed,
+        successes: totalSuccesses,
+        failures: totalFailures,
+        errorSummary: totalFailures > 0 ? errorSummary : null
+      }) + '\n');
+      
+      res.end();
     } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: error instanceof Error ? error.message : 'Failed to bulk update sales channels',
-        updatedProducts: [],
-        failedProducts: []
-      });
+      // If we haven't started streaming yet, send a regular error response
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          message: error instanceof Error ? error.message : 'Failed to bulk update sales channels',
+          updatedProducts: [],
+          failedProducts: []
+        });
+      } else {
+        // Otherwise end the stream with an error
+        res.write(JSON.stringify({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to bulk update sales channels',
+          timestamp: new Date().toISOString()
+        }) + '\n');
+        res.end();
+      }
     }
   };
 

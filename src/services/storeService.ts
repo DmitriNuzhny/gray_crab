@@ -7,6 +7,17 @@ export class StoreService {
   private apiKey: string;
   private graphqlUrl: string;
 
+  // Cache for publication IDs to avoid repeated API calls
+  private publicationMapCache: Map<string, string> | null = null;
+
+  // Add a token bucket rate limiter
+  private tokenBucket = {
+    tokens: 50,  // Start with full tokens
+    lastRefill: Date.now(),
+    maxTokens: 50,
+    refillRate: 2, // Tokens per second to refill
+  };
+
   constructor() {
     this.baseUrl = env.storeApiUrl;
     this.apiKey = env.storeApiKey;
@@ -30,6 +41,124 @@ export class StoreService {
       'X-Shopify-Access-Token': this.apiKey,
       'Content-Type': 'application/json'
     };
+  }
+
+  // Method to consume a token, returns true if token was consumed, false if need to wait
+  private async consumeToken(cost = 1): Promise<boolean> {
+    // Refill tokens based on time elapsed
+    const now = Date.now();
+    const elapsedSeconds = (now - this.tokenBucket.lastRefill) / 1000;
+    this.tokenBucket.tokens = Math.min(
+      this.tokenBucket.maxTokens,
+      this.tokenBucket.tokens + elapsedSeconds * this.tokenBucket.refillRate
+    );
+    this.tokenBucket.lastRefill = now;
+    
+    // Check if we have enough tokens
+    if (this.tokenBucket.tokens >= cost) {
+      this.tokenBucket.tokens -= cost;
+      return true;
+    } else {
+      // Calculate wait time needed to have enough tokens
+      const waitTimeMs = ((cost - this.tokenBucket.tokens) / this.tokenBucket.refillRate) * 1000;
+      console.log(`Rate limiting ourselves, waiting ${waitTimeMs.toFixed(0)}ms before processing next request`);
+      await new Promise(resolve => setTimeout(resolve, waitTimeMs));
+      this.tokenBucket.tokens = 0; // Used all available tokens plus waited
+      this.tokenBucket.lastRefill = Date.now();
+      return true;
+    }
+  }
+
+  private async makeRequest(url: string, data: any, retries = 3, timeout = 30000) {
+    let lastError;
+    let retryCount = 0;
+    
+    while (retryCount <= retries) {
+      try {
+        // Self-imposed rate limiting - consume a token before making request
+        await this.consumeToken(1);
+        
+        const response = await axios.post(url, data, { 
+          headers: this.getHeaders(),
+          timeout // Set timeout to prevent hanging requests
+        });
+        
+        // Check for rate limit headers
+        const callsLeft = response.headers['x-shopify-shop-api-call-limit'];
+        if (callsLeft) {
+          const [used, limit] = callsLeft.split('/').map(Number);
+          const remainingPercent = 100 * (1 - used / limit);
+          
+          // If we're close to the limit, dynamically adjust our token bucket
+          if (remainingPercent < 5) {
+            console.warn(`⚠️ API rate limit critically low: ${callsLeft}. Throttling aggressively.`);
+            // More aggressive throttling - wait longer with less tokens available
+            this.tokenBucket.tokens = 0;
+            this.tokenBucket.refillRate = 0.5; // Slow down to 1 request per 2 seconds
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else if (remainingPercent < 20) {
+            console.warn(`API rate limit getting low: ${callsLeft}. Throttling requests.`);
+            // Reduce refill rate temporarily
+            this.tokenBucket.refillRate = 1; // 1 request per second
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            // Reset refill rate to normal when we have plenty of capacity
+            this.tokenBucket.refillRate = 2;
+          }
+        }
+        
+        return response;
+      } catch (error) {
+        lastError = error;
+        retryCount++;
+        
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`Request failed (attempt ${retryCount}/${retries + 1}): ${errorMessage}`);
+        
+        // Check for GraphQL throttling errors
+        const isThrottled = 
+          (axios.isAxiosError(error) && error.response?.status === 429) ||
+          (axios.isAxiosError(error) && 
+           error.response?.data?.errors?.some((e: any) => e.message === "Throttled" || 
+                                              e.extensions?.code === "THROTTLED"));
+        
+        // Throttled response either from HTTP code or GraphQL error
+        if (isThrottled) {
+          // For throttling, use a more aggressive backoff strategy
+          const waitTime = Math.pow(2, retryCount + 2) * 1000; // 4s, 8s, 16s, 32s...
+          console.warn(`🛑 Rate limited by Shopify API. Waiting ${waitTime/1000}s before retrying. Retry ${retryCount}/${retries + 1}`);
+          
+          // Reset our token bucket to be very conservative
+          this.tokenBucket.tokens = 0;
+          this.tokenBucket.refillRate = 0.2; // Very slow rate - only 1 request per 5 seconds
+          
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          
+          // Don't count this as a retry and try again
+          retryCount--;
+          continue;
+        }
+        
+        // Only retry on network errors or 5xx responses, not on 4xx errors (except 429)
+        if (
+          axios.isAxiosError(error) && 
+          (error.code === 'ECONNABORTED' || 
+           error.code === 'ETIMEDOUT' || 
+           (error.response && error.response.status >= 500))
+        ) {
+          // Wait with exponential backoff before retrying (500ms, 1000ms, 2000ms, etc.)
+          const delay = Math.pow(2, retryCount) * 500;
+          console.log(`Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // Don't retry on client errors (4xx) other than rate limiting
+        throw error;
+      }
+    }
+    
+    throw lastError;
   }
 
   async getAllSalesChannels(): Promise<string[]> {
@@ -156,6 +285,11 @@ export class StoreService {
   }
 
   private async getPublicationIds(): Promise<Map<string, string>> {
+    // Use cached version if available
+    if (this.publicationMapCache) {
+      return this.publicationMapCache;
+    }
+    
     const query = `
       {
         publications(first: 10) {
@@ -183,24 +317,28 @@ export class StoreService {
     response.data.data.publications.edges.forEach((edge: any) => {
       publicationMap.set(edge.node.name, edge.node.id);
     });
-
+    
+    // Cache the result
+    this.publicationMapCache = publicationMap;
     return publicationMap;
   }
 
   async updateProductSalesChannels(productId: string, salesChannels: string[]): Promise<Product> {
     try {
-      // First, get all publication IDs and their names
+      // Get publication IDs - this will use the cache if available
       const publicationMap = await this.getPublicationIds();
       
       // Format the product ID for GraphQL
       const gqlProductId = `gid://shopify/Product/${productId}`;
       
-      // For each sales channel, we need to publish/unpublish the product
+      // Create all the mutations in advance
+      const mutations = [];
+      
       for (const [channelName, publicationId] of publicationMap.entries()) {
         const shouldPublish = salesChannels.includes(channelName);
         
-        const mutation = shouldPublish ? `
-          mutation {
+        if (shouldPublish) {
+          mutations.push(`
             publishablePublish(
               id: "${gqlProductId}",
               input: {
@@ -217,9 +355,9 @@ export class StoreService {
                 message
               }
             }
-          }
-        ` : `
-          mutation {
+          `);
+        } else {
+          mutations.push(`
             publishableUnpublish(
               id: "${gqlProductId}",
               input: {
@@ -236,32 +374,65 @@ export class StoreService {
                 message
               }
             }
+          `);
+        }
+      }
+      
+      // Execute mutations in batches
+      const batchSize = 5; // Number of mutations to execute at once
+      for (let i = 0; i < mutations.length; i += batchSize) {
+        const batch = mutations.slice(i, i + batchSize);
+        
+        // Create a batch mutation query
+        const batchQuery = `
+          mutation {
+            ${batch.map((mutation, index) => `m${index}: ${mutation}`).join('\n')}
           }
         `;
-
-        const response = await axios.post(
+        
+        // Use the makeRequest method with retry logic instead of axios directly
+        const response = await this.makeRequest(
           this.graphqlUrl,
-          { query: mutation },
-          { headers: this.getHeaders() }
+          { query: batchQuery },
+          3, // 3 retries
+          60000 // 60 second timeout
         );
 
         if (response.data.errors) {
-          throw new Error(response.data.errors[0].message);
+          console.error(`GraphQL errors for product ${productId}:`, JSON.stringify(response.data.errors));
+          throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
         }
-
-        const result = response.data.data;
-        if (result.userErrors?.length > 0) {
-          throw new Error(`Failed to update publication status: ${result.userErrors[0].message}`);
+        
+        // Check user errors in each mutation response
+        const responseData = response.data.data;
+        for (let j = 0; j < batch.length; j++) {
+          const mutationKey = `m${j}`;
+          if (responseData[mutationKey]?.userErrors?.length > 0) {
+            const userError = responseData[mutationKey].userErrors[0];
+            console.error(`User error for product ${productId}, mutation ${mutationKey}:`, JSON.stringify(userError));
+            throw new Error(`Mutation error: ${userError.message}`);
+          }
         }
       }
 
-      // Return the updated product
-      return this.getProduct(productId) as Promise<Product>;
+      // Skip fetching the updated product details to improve performance
+      // Just return a basic product object with the ID
+      return { id: productId } as Product;
     } catch (error) {
+      // Log the detailed error
+      console.error(`Failed to update product ${productId} sales channels:`, error);
+      
       if (axios.isAxiosError(error)) {
-        throw new Error(`Failed to update product sales channels: ${error.message}`);
+        // Capture response data if available
+        const responseData = error.response?.data;
+        console.error(`Axios error details for product ${productId}:`, JSON.stringify({
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          responseData: responseData
+        }));
+        throw new Error(`Failed to update product sales channels: ${error.message}. Status: ${error.response?.status}`);
       }
-      throw new Error('Failed to update product sales channels');
+      throw new Error(`Failed to update product sales channels: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
