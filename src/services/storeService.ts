@@ -475,4 +475,197 @@ export class StoreService {
       throw new Error(`Failed to bulk update sales channels: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
+
+  async getProductsMissingChannels(): Promise<string[]> {
+    try {
+      // Get all available sales channels
+      const allSalesChannels = await this.getAllSalesChannels();
+      console.log(`Found ${allSalesChannels.length} total sales channels`);
+      
+      // We'll use bulk queries with pagination to efficiently process products
+      const productsMissingChannels: string[] = [];
+      let hasNextPage = true;
+      let cursor: string | undefined;
+      const pageSize = 50; // Process 50 products at a time in bulk
+      
+      console.log(`Starting to query products in batches of ${pageSize}...`);
+      
+      // Process products in pages
+      while (hasNextPage) {
+        try {
+          // Construct a bulk query that processes multiple products at once
+          const query = `
+            {
+              products(first: ${pageSize}${cursor ? `, after: "${cursor}"` : ''}) {
+                edges {
+                  node {
+                    id
+                    title
+                    productPublications(first: ${allSalesChannels.length}) {
+                      edges {
+                        node {
+                          channel {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                  cursor
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
+            }
+          `;
+          
+          // Make the request with our rate limiting and retry logic
+          const response = await this.makeRequest(
+            this.graphqlUrl,
+            { query },
+            3, // retries
+            60000 // longer timeout for bulk query
+          );
+          
+          if (response.data.errors) {
+            console.error('GraphQL query errors:', response.data.errors);
+            // Continue to next page despite errors
+          } else {
+            // Process the batch of products
+            const products = response.data.data.products.edges;
+            hasNextPage = response.data.data.products.pageInfo.hasNextPage;
+            
+            if (products.length > 0) {
+              // Update cursor for next page
+              cursor = products[products.length - 1].cursor;
+              
+              // Process each product in the batch
+              for (const product of products) {
+                const productId = product.node.id.split('/').pop();
+                const publicationsEdges = product.node.productPublications?.edges || [];
+                const productChannels = publicationsEdges.map((edge: any) => edge.node.channel.name);
+                
+                // Check if this product is missing any channels
+                if (productChannels.length < allSalesChannels.length) {
+                  productsMissingChannels.push(productId);
+                }
+              }
+              
+              console.log(`Processed ${products.length} products, found ${productsMissingChannels.length} with missing channels so far`);
+            } else {
+              console.log('No products returned in this batch, ending pagination');
+              hasNextPage = false;
+            }
+          }
+          
+          // Add a small delay between pages to avoid rate limiting
+          if (hasNextPage) {
+            const delay = 500; // Reduced delay (500ms instead of 2000ms)
+            console.log(`Waiting ${delay}ms before fetching next page...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        } catch (error) {
+          console.error('Error processing product batch:', error);
+          
+          // If we encounter an error, reduce the page size and retry
+          if (pageSize > 10) {
+            console.log('Reducing page size and trying again...');
+            return this.getProductsMissingChannelsWithSmallerBatches(allSalesChannels, pageSize / 2, cursor);
+          }
+          
+          // If we're already at a small page size, re-throw the error
+          throw error;
+        }
+      }
+      
+      console.log(`Completed scan. Found ${productsMissingChannels.length} products missing channels.`);
+      return productsMissingChannels;
+    } catch (error) {
+      console.error('Error in getProductsMissingChannels:', error);
+      throw new Error(`Failed to fetch products missing channels: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  // Fallback method with smaller batch size in case of failures
+  private async getProductsMissingChannelsWithSmallerBatches(
+    allSalesChannels: string[],
+    pageSize: number,
+    startCursor?: string
+  ): Promise<string[]> {
+    console.log(`Retrying with smaller batch size: ${pageSize}`);
+    
+    const productsMissingChannels: string[] = [];
+    let hasNextPage = true;
+    let cursor = startCursor;
+    
+    while (hasNextPage) {
+      // Similar implementation but with smaller batches
+      const query = `
+        {
+          products(first: ${pageSize}${cursor ? `, after: "${cursor}"` : ''}) {
+            edges {
+              node {
+                id
+                productPublications(first: ${allSalesChannels.length}) {
+                  edges {
+                    node {
+                      channel {
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+              cursor
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+      `;
+      
+      try {
+        const response = await this.makeRequest(
+          this.graphqlUrl,
+          { query },
+          3,
+          30000
+        );
+        
+        const products = response.data.data.products.edges;
+        hasNextPage = response.data.data.products.pageInfo.hasNextPage;
+        
+        if (products.length > 0) {
+          cursor = products[products.length - 1].cursor;
+          
+          for (const product of products) {
+            const productId = product.node.id.split('/').pop();
+            const publicationsEdges = product.node.productPublications?.edges || [];
+            const productChannels = publicationsEdges.map((edge: any) => edge.node.channel.name);
+            
+            if (productChannels.length < allSalesChannels.length) {
+              productsMissingChannels.push(productId);
+            }
+          }
+          
+          console.log(`Processed ${products.length} products, found ${productsMissingChannels.length} with missing channels so far`);
+        } else {
+          hasNextPage = false;
+        }
+        
+        // Slightly longer delay for the fallback method
+        if (hasNextPage) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (error) {
+        console.error('Error in fallback method:', error);
+        throw error;
+      }
+    }
+    
+    return productsMissingChannels;
+  }
 } 

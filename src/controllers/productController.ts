@@ -303,4 +303,22 @@ export class ProductController {
       });
     }
   };
+
+  getProductsMissingChannels = async (req: Request, res: Response) => {
+    try {
+      const productIds = await this.productService.getProductsMissingChannels();
+      res.json({
+        success: true,
+        message: 'Products missing sales channels fetched successfully',
+        count: productIds.length,
+        data: productIds
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error fetching products missing sales channels',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  };
 } 

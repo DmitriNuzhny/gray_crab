@@ -221,4 +221,8 @@ export class ProductService {
     // Implement product creation logic here
     throw new Error('Method not implemented');
   }
+
+  async getProductsMissingChannels(): Promise<string[]> {
+    return this.storeService.getProductsMissingChannels();
+  }
 } 

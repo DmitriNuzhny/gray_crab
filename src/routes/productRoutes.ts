@@ -6,6 +6,7 @@ const productController = new ProductController();
 
 // GET endpoints
 router.get('/sales-channels', productController.getAllSalesChannels.bind(productController));
+router.get('/products-missing-channels', productController.getProductsMissingChannels.bind(productController));
 router.get('/', productController.getAllProducts.bind(productController));
 router.get('/:id', productController.getProduct.bind(productController));
 
