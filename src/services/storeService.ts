@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Product } from '../types/product';
+import { Product, GoogleProductAttributes } from '../types/product';
 import { env } from '../config/env';
 
 export class StoreService {
@@ -476,6 +476,88 @@ export class StoreService {
     }
   }
 
+  async updateGoogleAttributes(productId: string, attributes: GoogleProductAttributes): Promise<Product> {
+    try {
+      const { category, color, size, gender, ageGroup } = attributes;
+      
+      // Format the product ID for GraphQL
+      const gqlProductId = `gid://shopify/Product/${productId}`;
+      
+      // Construct metafield array, only including attributes that are defined
+      const metafieldEntries = [];
+
+      if (category) {
+        metafieldEntries.push(`{namespace: "google", key: "google_product_category", value: "${category}", type: "single_line_text_field"}`);
+      }
+      
+      if (color) {
+        metafieldEntries.push(`{namespace: "google", key: "color", value: "${color}", type: "single_line_text_field"}`);
+      }
+      
+      if (size) {
+        metafieldEntries.push(`{namespace: "google", key: "size", value: "${size}", type: "single_line_text_field"}`);
+      }
+      
+      if (gender) {
+        metafieldEntries.push(`{namespace: "google", key: "gender", value: "${gender}", type: "single_line_text_field"}`);
+      }
+      
+      if (ageGroup) {
+        metafieldEntries.push(`{namespace: "google", key: "age_group", value: "${ageGroup}", type: "single_line_text_field"}`);
+      }
+      
+      // Skip if no attributes are provided
+      if (metafieldEntries.length === 0) {
+        console.log(`No attributes provided for product ${productId}, skipping update`);
+        return { id: productId } as Product;
+      }
+      
+      const query = `
+        mutation {
+          productUpdate(input: {
+            id: "${gqlProductId}",
+            metafields: [
+              ${metafieldEntries.join(',\n              ')}
+            ]
+          }) {
+            product {
+              id
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+      
+      // Use the makeRequest method with retry logic
+      const response = await this.makeRequest(
+        this.graphqlUrl,
+        { query },
+        3, // 3 retries
+        60000 // 60 second timeout
+      );
+      
+      if (response.data.errors) {
+        console.error(`GraphQL errors for product ${productId}:`, JSON.stringify(response.data.errors));
+        throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
+      }
+      
+      const userErrors = response.data.data.productUpdate.userErrors;
+      if (userErrors && userErrors.length > 0) {
+        const userError = userErrors[0];
+        console.error(`User error updating Google attributes for product ${productId}:`, JSON.stringify(userError));
+        throw new Error(`Mutation error: ${userError.message}`);
+      }
+      
+      return { id: productId } as Product;
+    } catch (error) {
+      console.error(`Failed to update Google attributes for product ${productId}:`, error);
+      throw new Error(`Failed to update Google attributes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   async getProductsMissingChannels(): Promise<string[]> {
     try {
       // Get all available sales channels
@@ -667,5 +749,246 @@ export class StoreService {
     }
     
     return productsMissingChannels;
+  }
+
+  async getProductsWithGoogleYouTubeErrors(): Promise<string[]> {
+    try {
+      console.log(`Starting to fetch products with Google & YouTube publishing errors...`);
+      
+      // We'll use bulk queries with pagination to efficiently process products
+      const productsWithErrors: string[] = [];
+      let hasNextPage = true;
+      let cursor: string | undefined;
+      const pageSize = 50; // Process 50 products at a time in bulk
+      
+      // Get publication IDs for Google and YouTube
+      const publicationMap = await this.getPublicationIds();
+      const googlePublicationId = Array.from(publicationMap.entries())
+        .find(([name]) => name.toLowerCase().includes('google'))?.[1];
+      const youtubePublicationId = Array.from(publicationMap.entries())
+        .find(([name]) => name.toLowerCase().includes('youtube'))?.[1];
+        
+      if (!googlePublicationId && !youtubePublicationId) {
+        throw new Error('Could not find Google or YouTube publication IDs');
+      }
+      
+      console.log(`Found publication IDs: Google=${googlePublicationId}, YouTube=${youtubePublicationId}`);
+      console.log(`Starting to query products in batches of ${pageSize}...`);
+      
+      // Process products in pages
+      while (hasNextPage) {
+        try {
+          // Construct a bulk query that processes multiple products at once
+          const query = `
+            {
+              products(first: ${pageSize}${cursor ? `, after: "${cursor}"` : ''}) {
+                edges {
+                  node {
+                    id
+                    title
+                    productPublications(first: 20) {
+                      edges {
+                        node {
+                          publication {
+                            id
+                            name
+                          }
+                          publishDate
+                          isPublished
+                          publishingError {
+                            message
+                            code
+                          }
+                        }
+                      }
+                    }
+                  }
+                  cursor
+                }
+                pageInfo {
+                  hasNextPage
+                }
+              }
+            }
+          `;
+          
+          // Make the request with our rate limiting and retry logic
+          const response = await this.makeRequest(
+            this.graphqlUrl,
+            { query },
+            3, // retries
+            60000 // longer timeout for bulk query
+          );
+          
+          if (response.data.errors) {
+            console.error('GraphQL query errors:', response.data.errors);
+            // Continue to next page despite errors
+          } else {
+            // Process the batch of products
+            const products = response.data.data.products.edges;
+            hasNextPage = response.data.data.products.pageInfo.hasNextPage;
+            
+            if (products.length > 0) {
+              // Update cursor for next page
+              cursor = products[products.length - 1].cursor;
+              
+              // Process each product in the batch
+              for (const product of products) {
+                const productId = product.node.id.split('/').pop();
+                const publications = product.node.productPublications?.edges || [];
+                
+                // Check for Google or YouTube publishing errors
+                for (const pub of publications) {
+                  const pubId = pub.node.publication.id;
+                  const isGoogleOrYouTube = 
+                    (googlePublicationId && pubId === googlePublicationId) ||
+                    (youtubePublicationId && pubId === youtubePublicationId);
+                  
+                  if (isGoogleOrYouTube && pub.node.publishingError) {
+                    // Found an error with Google or YouTube publishing
+                    productsWithErrors.push(productId);
+                    break; // No need to check other publications for this product
+                  }
+                }
+              }
+              
+              console.log(`Processed ${products.length} products, found ${productsWithErrors.length} with Google/YouTube errors so far`);
+            } else {
+              console.log('No products returned in this batch, ending pagination');
+              hasNextPage = false;
+            }
+          }
+          
+          // Add a small delay between pages to avoid rate limiting
+          if (hasNextPage) {
+            const delay = 500;
+            console.log(`Waiting ${delay}ms before fetching next page...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        } catch (error) {
+          console.error('Error processing product batch:', error);
+          
+          // If we encounter an error, reduce the page size and retry
+          if (pageSize > 10) {
+            console.log('Reducing page size and trying again...');
+            return this.getProductsWithGoogleYouTubeErrorsWithSmallerBatches(pageSize / 2, cursor);
+          }
+          
+          // If we're already at a small page size, re-throw the error
+          throw error;
+        }
+      }
+      
+      console.log(`Completed scan. Found ${productsWithErrors.length} products with Google/YouTube publishing errors.`);
+      return productsWithErrors;
+    } catch (error) {
+      console.error('Error in getProductsWithGoogleYouTubeErrors:', error);
+      throw new Error(`Failed to fetch products with Google/YouTube errors: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async getProductsWithGoogleYouTubeErrorsWithSmallerBatches(
+    pageSize: number,
+    startCursor?: string
+  ): Promise<string[]> {
+    console.log(`Retrying with smaller batch size: ${pageSize}`);
+    
+    // Same implementation but with smaller batch size, simplified version of the main method
+    // This is a fallback for when we encounter errors with larger batches
+    const productsWithErrors: string[] = [];
+    let hasNextPage = true;
+    let cursor = startCursor;
+    
+    // Get publication IDs for Google and YouTube
+    const publicationMap = await this.getPublicationIds();
+    const googlePublicationId = Array.from(publicationMap.entries())
+      .find(([name]) => name.toLowerCase().includes('google'))?.[1];
+    const youtubePublicationId = Array.from(publicationMap.entries())
+      .find(([name]) => name.toLowerCase().includes('youtube'))?.[1];
+      
+    // Process products in pages
+    while (hasNextPage) {
+      const query = `
+        {
+          products(first: ${pageSize}${cursor ? `, after: "${cursor}"` : ''}) {
+            edges {
+              node {
+                id
+                title
+                productPublications(first: 20) {
+                  edges {
+                    node {
+                      publication {
+                        id
+                        name
+                      }
+                      publishDate
+                      isPublished
+                      publishingError {
+                        message
+                        code
+                      }
+                    }
+                  }
+                }
+              }
+              cursor
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+      `;
+      
+      try {
+        const response = await this.makeRequest(
+          this.graphqlUrl,
+          { query },
+          3,
+          30000
+        );
+        
+        const products = response.data.data.products.edges;
+        hasNextPage = response.data.data.products.pageInfo.hasNextPage;
+        
+        if (products.length > 0) {
+          cursor = products[products.length - 1].cursor;
+          
+          for (const product of products) {
+            const productId = product.node.id.split('/').pop();
+            const publications = product.node.productPublications?.edges || [];
+            
+            // Check for Google or YouTube publishing errors
+            for (const pub of publications) {
+              const pubId = pub.node.publication.id;
+              const isGoogleOrYouTube = 
+                (googlePublicationId && pubId === googlePublicationId) ||
+                (youtubePublicationId && pubId === youtubePublicationId);
+              
+              if (isGoogleOrYouTube && pub.node.publishingError) {
+                // Found an error with Google or YouTube publishing
+                productsWithErrors.push(productId);
+                break; // No need to check other publications for this product
+              }
+            }
+          }
+          
+          console.log(`Processed ${products.length} products, found ${productsWithErrors.length} with Google/YouTube errors so far`);
+        } else {
+          hasNextPage = false;
+        }
+        
+        // Slightly longer delay for the fallback method
+        if (hasNextPage) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (error) {
+        console.error('Error in fallback method:', error);
+        throw error;
+      }
+    }
+    
+    return productsWithErrors;
   }
 } 
