@@ -550,6 +550,29 @@ export class ProductController {
       let totalFailures = 0;
       const failureDetails = new Map();
       
+      // Keep track of assigned attributes for the final response
+      const productsWithAttributes: Array<{
+        id: string;
+        title?: string;
+        attributes: {
+          category: string;
+          color: string;
+          size: string;
+          gender: string;
+          ageGroup: string;
+        };
+        variants?: Array<{
+          id: string;
+          title?: string;
+          attributes: {
+            color: string;
+            size: string;
+            gender: string;
+            ageGroup: string;
+          };
+        }>;
+      }> = [];
+      
       for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
         const batch = productIds.slice(i, i + BATCH_SIZE);
         const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
@@ -565,8 +588,38 @@ export class ProductController {
             totalBatches
           }) + '\n');
           
+          // Get preview of attributes first to capture what will be assigned
+          const preview = await this.productService.previewGoogleAttributes(batch);
+          
           // Process each product in the batch to detect and set attributes
           const result = await this.productService.autoUpdateGoogleAttributes(batch);
+          
+          // Add successfully processed products to our attribute tracking
+          preview.products.forEach(product => {
+            if (result.updatedProducts.includes(product.id)) {
+              productsWithAttributes.push({
+                id: product.id,
+                title: product.title,
+                attributes: {
+                  category: product.detectedAttributes.category || '',
+                  color: product.detectedAttributes.color || '',
+                  size: product.detectedAttributes.size || '',
+                  gender: product.detectedAttributes.gender || '',
+                  ageGroup: product.detectedAttributes.ageGroup || ''
+                },
+                variants: product.variants?.map(variant => ({
+                  id: variant.id,
+                  title: variant.title,
+                  attributes: {
+                    color: variant.detectedAttributes.color || '',
+                    size: variant.detectedAttributes.size || '',
+                    gender: variant.detectedAttributes.gender || '',
+                    ageGroup: variant.detectedAttributes.ageGroup || ''
+                  }
+                }))
+              });
+            }
+          });
           
           processed += batch.length;
           totalSuccesses += result.updatedProducts?.length || 0;
@@ -652,7 +705,8 @@ export class ProductController {
         processed,
         successes: totalSuccesses,
         failures: totalFailures,
-        errorSummary: totalFailures > 0 ? errorSummary : null
+        errorSummary: totalFailures > 0 ? errorSummary : null,
+        products: productsWithAttributes
       }) + '\n');
       
       res.end();
