@@ -513,4 +513,325 @@ export class ProductController {
       }
     }
   };
+
+  autoUpdateGoogleAttributes = async (req: Request, res: Response) => {
+    try {
+      const { productIds } = req.body;
+      
+      if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+        res.status(400).json({ 
+          success: false, 
+          message: 'Request must include a non-empty array of productIds' 
+        });
+        return;
+      }
+      
+      // Set a longer timeout for this operation (30 minutes)
+      req.setTimeout(1800000);
+      
+      // Send initial response to client with chunked transfer encoding
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
+      });
+      
+      // Start the auto-update process
+      res.write(JSON.stringify({
+        status: 'processing',
+        message: `Starting automatic Google attributes update for ${productIds.length} products`,
+        timestamp: new Date().toISOString(),
+        total: productIds.length
+      }) + '\n');
+      
+      // Process products in batches
+      const BATCH_SIZE = 50;
+      let processed = 0;
+      let totalSuccesses = 0;
+      let totalFailures = 0;
+      const failureDetails = new Map();
+      
+      for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+        const batch = productIds.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(productIds.length / BATCH_SIZE);
+        
+        try {
+          res.write(JSON.stringify({
+            status: 'batch_started',
+            message: `Processing batch ${batchNumber} of ${totalBatches}`,
+            timestamp: new Date().toISOString(),
+            batchSize: batch.length,
+            batchNumber,
+            totalBatches
+          }) + '\n');
+          
+          // Process each product in the batch to detect and set attributes
+          const result = await this.productService.autoUpdateGoogleAttributes(batch);
+          
+          processed += batch.length;
+          totalSuccesses += result.updatedProducts?.length || 0;
+          totalFailures += result.failedProducts?.length || 0;
+          
+          // Collect failure details
+          if (result.failedProducts && result.failedProducts.length > 0) {
+            // Extract error details if available
+            const errorMatch = result.message.match(/Error summary:\n(.*)/s);
+            if (errorMatch && errorMatch[1]) {
+              const errorLines = errorMatch[1].split('\n');
+              errorLines.forEach((line: string) => {
+                const matches = line.match(/- (.*): (\d+) products/);
+                if (matches) {
+                  const [_, errorType, count] = matches;
+                  failureDetails.set(
+                    errorType, 
+                    (failureDetails.get(errorType) || 0) + parseInt(count, 10)
+                  );
+                }
+              });
+            }
+          }
+          
+          // Send progress update
+          res.write(JSON.stringify({
+            status: 'batch_completed',
+            message: `Processed ${processed} of ${productIds.length} products`,
+            timestamp: new Date().toISOString(),
+            total: productIds.length,
+            processed,
+            successes: totalSuccesses,
+            failures: totalFailures,
+            batchResults: {
+              success: result.success,
+              updatedCount: result.updatedProducts?.length || 0,
+              failedCount: result.failedProducts?.length || 0,
+              batchNumber,
+              totalBatches
+            }
+          }) + '\n');
+        } catch (error) {
+          // Handle errors for this batch
+          totalFailures += batch.length;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          
+          // Track the error
+          failureDetails.set(
+            errorMessage, 
+            (failureDetails.get(errorMessage) || 0) + batch.length
+          );
+          
+          res.write(JSON.stringify({
+            status: 'batch_error',
+            message: `Error processing batch ${batchNumber} of ${totalBatches}`,
+            error: errorMessage,
+            timestamp: new Date().toISOString(),
+            batchNumber,
+            totalBatches
+          }) + '\n');
+          
+          // Continue with next batch despite the error
+          processed += batch.length;
+        }
+        
+        // Add a small delay between batches
+        if (i + BATCH_SIZE < productIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Format error details for the final response
+      const errorSummary = Array.from(failureDetails.entries())
+        .map(([error, count]) => `- ${error}: ${count} products`)
+        .join('\n');
+      
+      // Send final completion message
+      res.write(JSON.stringify({
+        status: 'completed',
+        message: `Completed auto-updating Google attributes for ${processed} products`,
+        timestamp: new Date().toISOString(),
+        total: productIds.length,
+        processed,
+        successes: totalSuccesses,
+        failures: totalFailures,
+        errorSummary: totalFailures > 0 ? errorSummary : null
+      }) + '\n');
+      
+      res.end();
+    } catch (error) {
+      // If we haven't started streaming yet, send a regular error response
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          message: error instanceof Error ? error.message : 'Failed to auto-update Google attributes',
+        });
+      } else {
+        // Otherwise end the stream with an error
+        res.write(JSON.stringify({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to auto-update Google attributes',
+          timestamp: new Date().toISOString()
+        }) + '\n');
+        res.end();
+      }
+    }
+  };
+
+  applyGoogleAttributes = async (req: Request, res: Response) => {
+    try {
+      const { productIds } = req.body;
+
+      if (!Array.isArray(productIds) || productIds.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'productIds must be a non-empty array' 
+        });
+      }
+      
+      // Set a longer timeout for this operation (30 minutes)
+      req.setTimeout(1800000);
+      
+      // Send initial response to client with chunked transfer encoding
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
+      });
+      
+      // Start the auto-update process
+      res.write(JSON.stringify({
+        status: 'processing',
+        message: `Starting automatic Google attributes update for ${productIds.length} products`,
+        timestamp: new Date().toISOString(),
+        total: productIds.length
+      }) + '\n');
+      
+      // Process products in batches
+      const BATCH_SIZE = 50;
+      let processed = 0;
+      let totalSuccesses = 0;
+      let totalFailures = 0;
+      const failureDetails = new Map();
+      
+      for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
+        const batch = productIds.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(productIds.length / BATCH_SIZE);
+        
+        try {
+          res.write(JSON.stringify({
+            status: 'batch_started',
+            message: `Processing batch ${batchNumber} of ${totalBatches}`,
+            timestamp: new Date().toISOString(),
+            batchSize: batch.length,
+            batchNumber,
+            totalBatches
+          }) + '\n');
+          
+          // Process each product in the batch to detect and set attributes
+          const result = await this.productService.autoUpdateGoogleAttributes(batch);
+          
+          processed += batch.length;
+          totalSuccesses += result.updatedProducts?.length || 0;
+          totalFailures += result.failedProducts?.length || 0;
+          
+          // Collect failure details
+          if (result.failedProducts && result.failedProducts.length > 0) {
+            // Extract error details if available
+            const errorMatch = result.message.match(/Error summary:\n(.*)/s);
+            if (errorMatch && errorMatch[1]) {
+              const errorLines = errorMatch[1].split('\n');
+              errorLines.forEach((line: string) => {
+                const matches = line.match(/- (.*): (\d+) products/);
+                if (matches) {
+                  const [_, errorType, count] = matches;
+                  failureDetails.set(
+                    errorType, 
+                    (failureDetails.get(errorType) || 0) + parseInt(count, 10)
+                  );
+                }
+              });
+            }
+          }
+          
+          // Send progress update
+          res.write(JSON.stringify({
+            status: 'batch_completed',
+            message: `Processed ${processed} of ${productIds.length} products`,
+            timestamp: new Date().toISOString(),
+            total: productIds.length,
+            processed,
+            successes: totalSuccesses,
+            failures: totalFailures,
+            batchResults: {
+              success: result.success,
+              updatedCount: result.updatedProducts?.length || 0,
+              failedCount: result.failedProducts?.length || 0,
+              batchNumber,
+              totalBatches
+            }
+          }) + '\n');
+        } catch (error) {
+          // Handle errors for this batch
+          totalFailures += batch.length;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          
+          // Track the error
+          failureDetails.set(
+            errorMessage, 
+            (failureDetails.get(errorMessage) || 0) + batch.length
+          );
+          
+          res.write(JSON.stringify({
+            status: 'batch_error',
+            message: `Error processing batch ${batchNumber} of ${totalBatches}`,
+            error: errorMessage,
+            timestamp: new Date().toISOString(),
+            batchNumber,
+            totalBatches
+          }) + '\n');
+          
+          // Continue with next batch despite the error
+          processed += batch.length;
+        }
+        
+        // Add a small delay between batches
+        if (i + BATCH_SIZE < productIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Format error details for the final response
+      const errorSummary = Array.from(failureDetails.entries())
+        .map(([error, count]) => `- ${error}: ${count} products`)
+        .join('\n');
+      
+      // Send final completion message
+      res.write(JSON.stringify({
+        status: 'completed',
+        message: `Completed auto-updating Google attributes for ${processed} products`,
+        timestamp: new Date().toISOString(),
+        total: productIds.length,
+        processed,
+        successes: totalSuccesses,
+        failures: totalFailures,
+        errorSummary: totalFailures > 0 ? errorSummary : null
+      }) + '\n');
+      
+      res.end();
+    } catch (error) {
+      // If we haven't started streaming yet, send a regular error response
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          message: error instanceof Error ? error.message : 'Failed to auto-update Google attributes',
+        });
+      } else {
+        // Otherwise end the stream with an error
+        res.write(JSON.stringify({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to auto-update Google attributes',
+          timestamp: new Date().toISOString()
+        }) + '\n');
+        res.end();
+      }
+    }
+  };
 } 

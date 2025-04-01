@@ -411,4 +411,566 @@ export class ProductService {
   async getProductsMissingChannels(): Promise<string[]> {
     return this.storeService.getProductsMissingChannels();
   }
+
+  async autoUpdateGoogleAttributes(productIds: string[]): Promise<{
+    success: boolean;
+    message: string;
+    updatedProducts: string[];
+    failedProducts: string[];
+  }> {
+    try {
+      const updatedProducts: string[] = [];
+      const failedProducts: string[] = [];
+      const errorReasons = new Map<string, number>();
+      
+      // Process each product
+      for (const productId of productIds) {
+        try {
+          // Get product details to analyze and determine attributes
+          const product = await this.storeService.getProduct(productId);
+          
+          if (!product) {
+            failedProducts.push(productId);
+            this.incrementError(errorReasons, 'Product not found');
+            continue;
+          }
+          
+          // Auto-detect attributes based on product details
+          const attributes = await this.detectGoogleAttributes(product);
+          
+          // Check if there are multiple variants or just the default variant
+          const hasMultipleVariants = product.variants && 
+                                     Array.isArray(product.variants) && 
+                                     product.variants.length > 1;
+          
+          // Define product level attributes
+          let productAttributes: GoogleProductAttributes;
+          
+          if (hasMultipleVariants) {
+            // If product has multiple variants, only assign category at product level
+            productAttributes = {
+              category: attributes.category,
+              color: '',
+              size: '',
+              gender: '',
+              ageGroup: ''
+            };
+          } else {
+            // If product has only one (default) variant, assign all attributes at product level
+            productAttributes = attributes;
+          }
+          
+          // If we couldn't determine the required category attribute, log and skip
+          if (!productAttributes.category) {
+            failedProducts.push(productId);
+            this.incrementError(errorReasons, 'Could not determine product category');
+            continue;
+          }
+          
+          // Update the main product with the determined attributes
+          await this.storeService.updateGoogleAttributes(productId, productAttributes);
+          
+          // For products with multiple variants, update each variant with specific attributes
+          if (hasMultipleVariants && product.variants && product.variants.length > 0) {
+            for (const variant of product.variants) {
+              if (variant.id) {
+                try {
+                  // For variants, we set color, size, gender, ageGroup
+                  const variantAttributes: GoogleProductAttributes = {
+                    category: '', // Category is assigned at product level
+                    color: attributes.color,
+                    size: attributes.size,
+                    gender: attributes.gender,
+                    ageGroup: attributes.ageGroup
+                  };
+                  
+                  // Extract attributes from variant options when possible
+                  if (variant.option1 && typeof variant.option1 === 'string') {
+                    const option1Lower = variant.option1.toLowerCase();
+                    
+                    // Check if option1 looks like a size
+                    if (/^(xs|s|m|l|xl|xxl|xxxl|[0-9]+)$/i.test(option1Lower) || 
+                        /^(small|medium|large|one size)$/i.test(option1Lower)) {
+                      variantAttributes.size = this.normalizeSize(variant.option1);
+                    } 
+                    // Check if option1 looks like a color
+                    else if (this.isColor(option1Lower)) {
+                      variantAttributes.color = this.capitalizeFirstLetter(option1Lower);
+                    }
+                  }
+                  
+                  if (variant.option2 && typeof variant.option2 === 'string') {
+                    const option2Lower = variant.option2.toLowerCase();
+                    
+                    // Check if option2 looks like a size
+                    if (/^(xs|s|m|l|xl|xxl|xxxl|[0-9]+)$/i.test(option2Lower) || 
+                        /^(small|medium|large|one size)$/i.test(option2Lower)) {
+                      variantAttributes.size = this.normalizeSize(variant.option2);
+                    } 
+                    // Check if option2 looks like a color
+                    else if (this.isColor(option2Lower)) {
+                      variantAttributes.color = this.capitalizeFirstLetter(option2Lower);
+                    }
+                  }
+                  
+                  if (variant.option3 && typeof variant.option3 === 'string') {
+                    const option3Lower = variant.option3.toLowerCase();
+                    
+                    // Check if option3 contains gender information
+                    if (option3Lower.includes('men') || option3Lower.includes('women') || 
+                        option3Lower.includes('male') || option3Lower.includes('female') || 
+                        option3Lower.includes('unisex')) {
+                      
+                      if (option3Lower.includes('women') || option3Lower.includes('female')) {
+                        variantAttributes.gender = 'Female';
+                      } else if (option3Lower.includes('men') || option3Lower.includes('male')) {
+                        variantAttributes.gender = 'Male';
+                      } else if (option3Lower.includes('unisex')) {
+                        variantAttributes.gender = 'Unisex';
+                      }
+                    }
+                    
+                    // Check if option3 contains age group information
+                    if (option3Lower.includes('kid') || option3Lower.includes('child') || 
+                        option3Lower.includes('teen') || option3Lower.includes('adult')) {
+                      
+                      if (option3Lower.includes('kid') || option3Lower.includes('child')) {
+                        variantAttributes.ageGroup = 'Kids';
+                      } else if (option3Lower.includes('teen')) {
+                        variantAttributes.ageGroup = 'Adult'; // Google considers teens as adults
+                      } else if (option3Lower.includes('adult')) {
+                        variantAttributes.ageGroup = 'Adult';
+                      }
+                    }
+                  }
+                  
+                  // Format variant ID if needed (ensure it has the Shopify GID format)
+                  const variantId = variant.id.includes('gid://shopify/ProductVariant/') 
+                    ? variant.id 
+                    : `gid://shopify/ProductVariant/${variant.id}`;
+                    
+                  await this.storeService.updateGoogleAttributes(variantId, variantAttributes);
+                } catch (variantError) {
+                  console.error(`Error updating variant ${variant.id} for product ${productId}: ${variantError instanceof Error ? variantError.message : 'Unknown error'}`);
+                  // We don't fail the whole product if just a variant fails
+                }
+              }
+            }
+          }
+          
+          updatedProducts.push(productId);
+        } catch (error) {
+          failedProducts.push(productId);
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          this.incrementError(errorReasons, errorMessage);
+        }
+      }
+
+      // Build a summary message
+      let message = `Updated ${updatedProducts.length} products with Google attributes.`;
+      if (failedProducts.length > 0) {
+        message += ` Failed to update ${failedProducts.length} products.`;
+        
+        // Add error summary if there are failures
+        const errorSummary = Array.from(errorReasons.entries())
+          .map(([reason, count]) => `- ${reason}: ${count} products`)
+          .join('\n');
+          
+        message += `\nError summary:\n${errorSummary}`;
+      }
+
+      return {
+        success: failedProducts.length === 0,
+        message,
+        updatedProducts,
+        failedProducts
+      };
+    } catch (error) {
+      throw new Error(`Failed to auto-update Google attributes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  // Helper method to validate Google attributes
+  private validateGoogleAttributes(attributes: GoogleProductAttributes): boolean {
+    const { category, color, size, gender, ageGroup } = attributes;
+    return !!(category && color && size && gender && ageGroup);
+  }
+  
+  // Helper method to increment error counts
+  private incrementError(errorMap: Map<string, number>, reason: string): void {
+    errorMap.set(reason, (errorMap.get(reason) || 0) + 1);
+  }
+  
+  // Helper method to detect Google attributes from product data
+  private async detectGoogleAttributes(product: Product): Promise<GoogleProductAttributes> {
+    const attributes: GoogleProductAttributes = {
+      category: '',
+      color: '',
+      size: '',
+      gender: '',
+      ageGroup: ''
+    };
+    
+    // Get the product title and any existing metadata
+    const title = product.title || '';
+    const tags = Array.isArray(product.tags) ? product.tags.join(' ') : (product.tags || '');
+    const product_type = product.product_type || '';
+    
+    // Combine all text fields for analysis
+    const combinedText = `${title} ${tags} ${product_type}`.toLowerCase();
+    
+    // Detect product category (simplified approach - would be more sophisticated in production)
+    if (product_type) {
+      // Use product_type as the primary source for category
+      attributes.category = this.mapToGoogleCategory(product_type);
+    } else if (combinedText.includes('shirt') || combinedText.includes('tshirt') || combinedText.includes('t-shirt')) {
+      attributes.category = 'Apparel & Accessories > Clothing > Shirts & Tops';
+    } else if (combinedText.includes('pants') || combinedText.includes('trouser')) {
+      attributes.category = 'Apparel & Accessories > Clothing > Pants';
+    } else if (combinedText.includes('shoe') || combinedText.includes('sneaker') || combinedText.includes('footwear')) {
+      attributes.category = 'Apparel & Accessories > Shoes';
+    } else if (combinedText.includes('jacket') || combinedText.includes('coat')) {
+      attributes.category = 'Apparel & Accessories > Clothing > Outerwear';
+    } else if (combinedText.includes('dress')) {
+      attributes.category = 'Apparel & Accessories > Clothing > Dresses';
+    } else {
+      attributes.category = 'Apparel & Accessories > Clothing';
+    }
+    
+    // Detect color
+    const colors = ['red', 'blue', 'green', 'yellow', 'black', 'white', 'purple', 'orange', 'pink', 'brown', 'gray', 'grey'];
+    for (const color of colors) {
+      if (combinedText.includes(color)) {
+        attributes.color = color.charAt(0).toUpperCase() + color.slice(1);
+        break;
+      }
+    }
+    
+    // If color not found, default to most common attribute
+    if (!attributes.color) {
+      attributes.color = 'Black';
+    }
+    
+    // Detect size
+    type SizeMap = { [key: string]: string };
+    
+    const sizePatterns = [
+      { regex: /\b(xs|s|m|l|xl|xxl|xxxl)\b/i, map: { 'xs': 'XS', 's': 'S', 'm': 'M', 'l': 'L', 'xl': 'XL', 'xxl': '2XL', 'xxxl': '3XL' } as SizeMap },
+      { regex: /\b(small|medium|large)\b/i, map: { 'small': 'S', 'medium': 'M', 'large': 'L' } as SizeMap },
+      { regex: /\b(one size|one-size|os)\b/i, value: 'One Size' },
+      { regex: /\b(\d+)\b/, isNumeric: true }
+    ];
+    
+    for (const pattern of sizePatterns) {
+      const match = combinedText.match(pattern.regex);
+      if (match) {
+        if (pattern.isNumeric) {
+          attributes.size = match[1];
+        } else if (pattern.value) {
+          attributes.size = pattern.value;
+        } else if (pattern.map && match[1].toLowerCase() in pattern.map) {
+          const key = match[1].toLowerCase();
+          attributes.size = pattern.map[key];
+        }
+        break;
+      }
+    }
+    
+    // If size not found, use a default
+    if (!attributes.size) {
+      attributes.size = 'M';
+    }
+    
+    // Detect gender
+    if (combinedText.includes('women') || combinedText.includes('woman') || combinedText.includes('female')) {
+      attributes.gender = 'Female';
+    } else if (combinedText.includes('men') || combinedText.includes('man') || combinedText.includes('male')) {
+      attributes.gender = 'Male';
+    } else if (combinedText.includes('unisex')) {
+      attributes.gender = 'Unisex';
+    } else {
+      // Default gender based on product type as a fallback
+      if (combinedText.includes('dress') || combinedText.includes('skirt') || combinedText.includes('bra')) {
+        attributes.gender = 'Female';
+      } else {
+        attributes.gender = 'Unisex';
+      }
+    }
+    
+    // Detect age group
+    if (combinedText.includes('kid') || combinedText.includes('child') || combinedText.includes('youth') || combinedText.includes('junior')) {
+      if (combinedText.includes('newborn') || combinedText.includes('infant') || combinedText.includes('baby')) {
+        attributes.ageGroup = 'Newborn';
+      } else {
+        attributes.ageGroup = 'Kids';
+      }
+    } else if (combinedText.includes('teen') || combinedText.includes('adolescent')) {
+      attributes.ageGroup = 'Adult';
+    } else {
+      attributes.ageGroup = 'Adult';
+    }
+    
+    return attributes;
+  }
+  
+  // Map product type to Google product category
+  private mapToGoogleCategory(productType: string): string {
+    const typeMap: Record<string, string> = {
+      'shirt': 'Apparel & Accessories > Clothing > Shirts & Tops',
+      't-shirt': 'Apparel & Accessories > Clothing > Shirts & Tops',
+      'tshirt': 'Apparel & Accessories > Clothing > Shirts & Tops',
+      'pants': 'Apparel & Accessories > Clothing > Pants',
+      'jeans': 'Apparel & Accessories > Clothing > Pants > Jeans',
+      'shorts': 'Apparel & Accessories > Clothing > Shorts',
+      'dress': 'Apparel & Accessories > Clothing > Dresses',
+      'skirt': 'Apparel & Accessories > Clothing > Skirts',
+      'jacket': 'Apparel & Accessories > Clothing > Outerwear > Jackets',
+      'coat': 'Apparel & Accessories > Clothing > Outerwear > Coats',
+      'sweater': 'Apparel & Accessories > Clothing > Sweaters',
+      'hoodie': 'Apparel & Accessories > Clothing > Hoodies & Sweatshirts',
+      'sweatshirt': 'Apparel & Accessories > Clothing > Hoodies & Sweatshirts',
+      'shoes': 'Apparel & Accessories > Shoes',
+      'sneakers': 'Apparel & Accessories > Shoes > Athletic Shoes',
+      'boots': 'Apparel & Accessories > Shoes > Boots',
+      'sandals': 'Apparel & Accessories > Shoes > Sandals',
+      'hat': 'Apparel & Accessories > Clothing Accessories > Hats',
+      'cap': 'Apparel & Accessories > Clothing Accessories > Hats',
+      'scarf': 'Apparel & Accessories > Clothing Accessories > Scarves & Shawls',
+      'socks': 'Apparel & Accessories > Clothing Accessories > Socks',
+      'belt': 'Apparel & Accessories > Clothing Accessories > Belts',
+      'bag': 'Apparel & Accessories > Handbags, Wallets & Cases > Handbags',
+      'purse': 'Apparel & Accessories > Handbags, Wallets & Cases > Handbags',
+      'backpack': 'Apparel & Accessories > Handbags, Wallets & Cases > Backpacks',
+      'wallet': 'Apparel & Accessories > Handbags, Wallets & Cases > Wallets & Money Clips',
+      'jewelry': 'Apparel & Accessories > Jewelry',
+      'necklace': 'Apparel & Accessories > Jewelry > Necklaces',
+      'bracelet': 'Apparel & Accessories > Jewelry > Bracelets',
+      'earrings': 'Apparel & Accessories > Jewelry > Earrings',
+      'ring': 'Apparel & Accessories > Jewelry > Rings',
+      'watch': 'Apparel & Accessories > Jewelry > Watches'
+    };
+    
+    const lowerType = productType.toLowerCase();
+    
+    // Check for direct matches first
+    if (typeMap[lowerType]) {
+      return typeMap[lowerType];
+    }
+    
+    // Check if the product type contains any of our known types
+    for (const [key, category] of Object.entries(typeMap)) {
+      if (lowerType.includes(key)) {
+        return category;
+      }
+    }
+    
+    // Default fallback
+    return 'Apparel & Accessories > Clothing';
+  }
+
+  // Helper method to normalize size
+  private normalizeSize(sizeStr: string): string {
+    const sizeStr_lower = sizeStr.toLowerCase();
+    
+    // Standard sizing conversions
+    if (sizeStr_lower === 'xs' || sizeStr_lower === 'xsmall' || sizeStr_lower === 'extra small') return 'XS';
+    if (sizeStr_lower === 's' || sizeStr_lower === 'small') return 'S';
+    if (sizeStr_lower === 'm' || sizeStr_lower === 'medium') return 'M';
+    if (sizeStr_lower === 'l' || sizeStr_lower === 'large') return 'L';
+    if (sizeStr_lower === 'xl' || sizeStr_lower === 'xlarge' || sizeStr_lower === 'extra large') return 'XL';
+    if (sizeStr_lower === 'xxl' || sizeStr_lower === '2xl') return '2XL';
+    if (sizeStr_lower === 'xxxl' || sizeStr_lower === '3xl') return '3XL';
+    if (sizeStr_lower === 'one size' || sizeStr_lower === 'onesize' || sizeStr_lower === 'os') return 'One Size';
+    
+    // If it's numeric, return as is
+    if (/^\d+$/.test(sizeStr)) return sizeStr;
+    
+    // If we can't normalize it, return the original string with first letter capitalized
+    return this.capitalizeFirstLetter(sizeStr);
+  }
+  
+  // Helper method to check if a string looks like a color
+  private isColor(str: string): boolean {
+    const commonColors = [
+      'red', 'blue', 'green', 'yellow', 'black', 'white', 'purple', 
+      'orange', 'pink', 'brown', 'gray', 'grey', 'silver', 'gold', 
+      'beige', 'navy', 'teal', 'olive', 'maroon', 'coral', 'turquoise', 
+      'magenta', 'cyan', 'indigo', 'violet', 'khaki', 'tan', 'aqua',
+      'lavender', 'lime', 'mint', 'peach', 'salmon', 'crimson'
+    ];
+    
+    return commonColors.some(color => str.includes(color));
+  }
+  
+  // Helper method to capitalize first letter
+  private capitalizeFirstLetter(str: string): string {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  async previewGoogleAttributes(productIds: string[]): Promise<{
+    success: boolean;
+    message: string;
+    products: Array<{
+      id: string;
+      title?: string;
+      detectedAttributes: GoogleProductAttributes;
+      variants?: Array<{
+        id: string;
+        title?: string;
+        detectedAttributes: GoogleProductAttributes;
+      }>;
+    }>;
+  }> {
+    try {
+      const productsWithAttributes: Array<{
+        id: string;
+        title?: string;
+        detectedAttributes: GoogleProductAttributes;
+        variants?: Array<{
+          id: string;
+          title?: string;
+          detectedAttributes: GoogleProductAttributes;
+        }>;
+      }> = [];
+      
+      // Process each product
+      for (const productId of productIds) {
+        try {
+          // Get product details to analyze
+          const product = await this.storeService.getProduct(productId);
+          
+          if (!product) {
+            productsWithAttributes.push({
+              id: productId,
+              title: undefined,
+              detectedAttributes: {
+                category: '',
+                color: '',
+                size: '',
+                gender: '',
+                ageGroup: ''
+              }
+            });
+            continue;
+          }
+          
+          // Auto-detect attributes based on product details
+          const attributes = await this.detectGoogleAttributes(product);
+          
+          // Check if there are more than 2 variants
+          const hasMultipleVariants = product.variants && 
+                                     Array.isArray(product.variants) && 
+                                     product.variants.length > 2;
+          
+          // If we have multiple variants, only keep the category attribute for the product
+          let productAttributes: GoogleProductAttributes;
+          if (hasMultipleVariants) {
+            productAttributes = {
+              category: attributes.category,
+              color: '',
+              size: '',
+              gender: '',
+              ageGroup: ''
+            };
+          } else {
+            productAttributes = attributes;
+          }
+          
+          // Process variants if any
+          const variants: Array<{
+            id: string;
+            title?: string;
+            detectedAttributes: GoogleProductAttributes;
+          }> = [];
+          
+          if (product.variants && Array.isArray(product.variants) && product.variants.length > 0) {
+            for (const variant of product.variants) {
+              if (variant.id) {
+                // For variants in a multi-variant product, customize attributes
+                if (hasMultipleVariants) {
+                  // Start with the main detected attributes
+                  const variantAttributes: GoogleProductAttributes = {
+                    category: '',
+                    color: attributes.color,
+                    size: attributes.size,
+                    gender: attributes.gender,
+                    ageGroup: attributes.ageGroup
+                  };
+                  
+                  // Customize based on variant options if possible
+                  if (variant.option1 && typeof variant.option1 === 'string') {
+                    const option1Lower = variant.option1.toLowerCase();
+                    
+                    // Check if option1 looks like a size
+                    if (/^(xs|s|m|l|xl|xxl|xxxl|[0-9]+)$/i.test(option1Lower) || 
+                        /^(small|medium|large|one size)$/i.test(option1Lower)) {
+                      variantAttributes.size = this.normalizeSize(variant.option1);
+                    } 
+                    // Check if option1 looks like a color
+                    else if (this.isColor(option1Lower)) {
+                      variantAttributes.color = this.capitalizeFirstLetter(option1Lower);
+                    }
+                  }
+                  
+                  if (variant.option2 && typeof variant.option2 === 'string') {
+                    const option2Lower = variant.option2.toLowerCase();
+                    
+                    // Check if option2 looks like a size
+                    if (/^(xs|s|m|l|xl|xxl|xxxl|[0-9]+)$/i.test(option2Lower) || 
+                        /^(small|medium|large|one size)$/i.test(option2Lower)) {
+                      variantAttributes.size = this.normalizeSize(variant.option2);
+                    } 
+                    // Check if option2 looks like a color
+                    else if (this.isColor(option2Lower)) {
+                      variantAttributes.color = this.capitalizeFirstLetter(option2Lower);
+                    }
+                  }
+                  
+                  variants.push({
+                    id: variant.id,
+                    title: variant.title,
+                    detectedAttributes: variantAttributes
+                  });
+                } else {
+                  // For products with 2 or fewer variants, just inherit the product attributes
+                  variants.push({
+                    id: variant.id,
+                    title: variant.title,
+                    detectedAttributes: { ...attributes }
+                  });
+                }
+              }
+            }
+          }
+          
+          productsWithAttributes.push({
+            id: productId,
+            title: product.title,
+            detectedAttributes: productAttributes,
+            variants: variants.length > 0 ? variants : undefined
+          });
+        } catch (error) {
+          productsWithAttributes.push({
+            id: productId,
+            title: undefined,
+            detectedAttributes: {
+              category: '',
+              color: '',
+              size: '',
+              gender: '',
+              ageGroup: ''
+            }
+          });
+        }
+      }
+
+      return {
+        success: true,
+        message: `Preview of detected Google attributes for ${productIds.length} products and their variants`,
+        products: productsWithAttributes
+      };
+    } catch (error) {
+      throw new Error(`Failed to preview Google attributes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
 } 

@@ -25,6 +25,8 @@ router.get('/', productController.getAllProducts.bind(productController));
 router.post('/bulk-update-sales-channels', productController.bulkUpdateSalesChannels.bind(productController));
 router.post('/bulk-update-sales-channels-by-ids', productController.bulkUpdateSalesChannelsByIds.bind(productController));
 router.post('/bulk-update-google-attributes', productController.bulkUpdateGoogleAttributes.bind(productController));
+router.post('/auto-update-google-attributes', productController.autoUpdateGoogleAttributes.bind(productController));
+router.post('/apply-google-attributes', productController.applyGoogleAttributes.bind(productController));
 router.post('/:id/sales-channels', productController.updateProductSalesChannels.bind(productController));
 
 // Put the catch-all ID route last to avoid conflicts with other routes

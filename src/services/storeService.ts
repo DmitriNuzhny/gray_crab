@@ -12,10 +12,10 @@ export class StoreService {
 
   // Add a token bucket rate limiter
   private tokenBucket = {
-    tokens: 50,  // Start with full tokens
+    tokens: 30,  // Start with fewer tokens to be conservative
     lastRefill: Date.now(),
-    maxTokens: 50,
-    refillRate: 2, // Tokens per second to refill
+    maxTokens: 30, // Lower max tokens
+    refillRate: 1, // Reduce to 1 token per second (Shopify limit is 2/second)
   };
 
   constructor() {
@@ -24,9 +24,14 @@ export class StoreService {
     
     // Extract shop domain from the REST API URL
     // From: https://your-store.myshopify.com/admin/api/2024-04/products.json
-    // To: https://your-store.myshopify.com/admin/api/2024-01/graphql.json
+    // To: https://your-store.myshopify.com/admin/api/2024-04/graphql.json
     const shopUrl = this.baseUrl.split('/admin')[0];
-    this.graphqlUrl = `${shopUrl}/admin/api/2024-01/graphql.json`;
+    
+    // Extract API version from the REST API URL or default to 2024-04
+    const apiVersionMatch = this.baseUrl.match(/\/admin\/api\/([^\/]+)\//);
+    const apiVersion = apiVersionMatch ? apiVersionMatch[1] : '2024-04';
+    
+    this.graphqlUrl = `${shopUrl}/admin/api/${apiVersion}/graphql.json`;
     
     if (!this.baseUrl) {
       throw new Error('STORE_API_URL environment variable is not set');
@@ -57,12 +62,14 @@ export class StoreService {
     // Check if we have enough tokens
     if (this.tokenBucket.tokens >= cost) {
       this.tokenBucket.tokens -= cost;
+      // Add a small delay even when we have tokens to avoid bursts
+      await new Promise(resolve => setTimeout(resolve, 100));
       return true;
     } else {
       // Calculate wait time needed to have enough tokens
       const waitTimeMs = ((cost - this.tokenBucket.tokens) / this.tokenBucket.refillRate) * 1000;
       console.log(`Rate limiting ourselves, waiting ${waitTimeMs.toFixed(0)}ms before processing next request`);
-      await new Promise(resolve => setTimeout(resolve, waitTimeMs));
+      await new Promise(resolve => setTimeout(resolve, waitTimeMs + 200)); // Add buffer
       this.tokenBucket.tokens = 0; // Used all available tokens plus waited
       this.tokenBucket.lastRefill = Date.now();
       return true;
@@ -486,50 +493,67 @@ export class StoreService {
     }
   }
 
-  async updateGoogleAttributes(productId: string, attributes: GoogleProductAttributes): Promise<Product> {
+  async updateGoogleAttributes(entityId: string, attributes: GoogleProductAttributes): Promise<boolean> {
     try {
-      const { category, color, size, gender, ageGroup } = attributes;
+      // Check if this is a variant ID
+      const isVariant = entityId.includes('gid://shopify/ProductVariant/');
       
-      // Format the product ID for GraphQL
-      const gqlProductId = `gid://shopify/Product/${productId}`;
-      
-      // Construct metafield array, only including attributes that are defined
-      const metafieldEntries = [];
-
-      if (category) {
-        metafieldEntries.push(`{namespace: "google", key: "google_product_category", value: "${category}", type: "single_line_text_field"}`);
+      // Format the ID correctly for GraphQL
+      let gqlId = entityId;
+      if (!isVariant && !entityId.includes('gid://shopify/Product/')) {
+        gqlId = `gid://shopify/Product/${entityId}`;
       }
       
-      if (color) {
-        metafieldEntries.push(`{namespace: "google", key: "color", value: "${color}", type: "single_line_text_field"}`);
+      // Create the mutations for each attribute
+      const mutations = [];
+      
+      // For product level, collect all metafields to update in a single mutation
+      const productMetafields = [];
+      // For variant level, collect all metafields to update in a single mutation
+      const variantMetafields = [];
+      
+      for (const [key, value] of Object.entries(attributes)) {
+        // Skip empty values
+        if (!value) {
+          continue;
+        }
+        
+        // Skip category for variants (it's product-level)
+        if (isVariant && key === 'category') {
+          continue;
+        }
+        
+        // Create metafield input for each attribute
+        const metafieldInput = {
+          namespace: "google",
+          key: key,
+          value: value,
+          type: "single_line_text_field"
+        };
+        
+        if (isVariant) {
+          variantMetafields.push(metafieldInput);
+        } else {
+          productMetafields.push(metafieldInput);
+        }
       }
       
-      if (size) {
-        metafieldEntries.push(`{namespace: "google", key: "size", value: "${size}", type: "single_line_text_field"}`);
-      }
-      
-      if (gender) {
-        metafieldEntries.push(`{namespace: "google", key: "gender", value: "${gender}", type: "single_line_text_field"}`);
-      }
-      
-      if (ageGroup) {
-        metafieldEntries.push(`{namespace: "google", key: "age_group", value: "${ageGroup}", type: "single_line_text_field"}`);
-      }
-      
-      // Skip if no attributes are provided
-      if (metafieldEntries.length === 0) {
-        console.log(`No attributes provided for product ${productId}, skipping update`);
-        return { id: productId } as Product;
-      }
-      
-      const query = `
-        mutation {
-          productUpdate(input: {
-            id: "${gqlProductId}",
-            metafields: [
-              ${metafieldEntries.join(',\n              ')}
-            ]
-          }) {
+      // Create product metafields mutation if we have any product metafields
+      if (!isVariant && productMetafields.length > 0) {
+        mutations.push(`
+          productUpdate(
+            input: {
+              id: "${gqlId}",
+              metafields: [
+                ${productMetafields.map(mf => `{
+                  namespace: "${mf.namespace}",
+                  key: "${mf.key}",
+                  value: "${mf.value}",
+                  type: "${mf.type}"
+                }`).join(',')}
+              ]
+            }
+          ) {
             product {
               id
             }
@@ -538,33 +562,85 @@ export class StoreService {
               message
             }
           }
+        `);
+      }
+      
+      // Create variant metafields mutation if we have any variant metafields
+      if (isVariant && variantMetafields.length > 0) {
+        mutations.push(`
+          productVariantUpdate(
+            input: {
+              id: "${gqlId}",
+              metafields: [
+                ${variantMetafields.map(mf => `{
+                  namespace: "${mf.namespace}",
+                  key: "${mf.key}",
+                  value: "${mf.value}",
+                  type: "${mf.type}"
+                }`).join(',')}
+              ]
+            }
+          ) {
+            productVariant {
+              id
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        `);
+      }
+      
+      // If we don't have any mutations (e.g., all values were empty), return success
+      if (mutations.length === 0) {
+        return true;
+      }
+      
+      // Execute mutations in batches
+      const batchSize = 5; // Number of mutations to execute at once
+      for (let i = 0; i < mutations.length; i += batchSize) {
+        const batch = mutations.slice(i, i + batchSize);
+        
+        // Create a batch mutation query
+        const batchQuery = `
+          mutation {
+            ${batch.map((mutation, index) => `m${index}: ${mutation}`).join('\n')}
+          }
+        `;
+        
+        // Use the makeRequest method with retry logic
+        const response = await this.makeRequest(
+          this.graphqlUrl,
+          { query: batchQuery },
+          3, // 3 retries
+          60000 // 60 second timeout
+        );
+
+        if (response.data.errors) {
+          console.error(`GraphQL errors for ${isVariant ? 'variant' : 'product'} ${entityId}:`, JSON.stringify(response.data.errors));
+          throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
         }
-      `;
-      
-      // Use the makeRequest method with retry logic
-      const response = await this.makeRequest(
-        this.graphqlUrl,
-        { query },
-        3, // 3 retries
-        60000 // 60 second timeout
-      );
-      
-      if (response.data.errors) {
-        console.error(`GraphQL errors for product ${productId}:`, JSON.stringify(response.data.errors));
-        throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
+        
+        // Check user errors in each mutation response
+        const responseData = response.data.data;
+        for (let j = 0; j < batch.length; j++) {
+          const mutationKey = `m${j}`;
+          if (responseData[mutationKey]?.userErrors?.length > 0) {
+            const userError = responseData[mutationKey].userErrors[0];
+            console.error(`User error for ${isVariant ? 'variant' : 'product'} ${entityId}, mutation ${mutationKey}:`, JSON.stringify(userError));
+            throw new Error(`Mutation error: ${userError.message}`);
+          }
+        }
       }
-      
-      const userErrors = response.data.data.productUpdate.userErrors;
-      if (userErrors && userErrors.length > 0) {
-        const userError = userErrors[0];
-        console.error(`User error updating Google attributes for product ${productId}:`, JSON.stringify(userError));
-        throw new Error(`Mutation error: ${userError.message}`);
-      }
-      
-      return { id: productId } as Product;
+
+      return true;
     } catch (error) {
-      console.error(`Failed to update Google attributes for product ${productId}:`, error);
-      throw new Error(`Failed to update Google attributes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error(`Error updating Google attributes for ${entityId}:`, error);
+      if (axios.isAxiosError(error)) {
+        throw new Error(`Failed to update Google attributes: ${error.message}`);
+      }
+      throw new Error('Failed to update Google attributes');
     }
   }
 
