@@ -545,9 +545,10 @@ export class ProductService {
                   }
                   
                   // Format variant ID if needed (ensure it has the Shopify GID format)
-                  const variantId = variant.id.includes('gid://shopify/ProductVariant/') 
-                    ? variant.id 
-                    : `gid://shopify/ProductVariant/${variant.id}`;
+                  const variantIdStr = String(variant.id); // Convert to string to handle numeric IDs
+                  const variantId = variantIdStr.includes('gid://shopify/ProductVariant/') 
+                    ? variantIdStr 
+                    : `gid://shopify/ProductVariant/${variantIdStr}`;
                     
                   await this.storeService.updateGoogleAttributes(variantId, variantAttributes);
                 } catch (variantError) {

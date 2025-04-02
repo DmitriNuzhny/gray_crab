@@ -937,7 +937,7 @@ export class StoreService {
                 // If product has the Google & YouTube channel, check required Google attributes
                 if (hasGoogleYoutubeChannel) {
                   // Required Google attributes
-                  const requiredAttributes = ['google_product_category', 'color', 'size', 'gender', 'age_group'];
+                  const requiredAttributes = ['category', 'color', 'size', 'gender', 'ageGroup'];
                   const missingAttributes = [];
                   
                   // Check which attributes are missing or empty
