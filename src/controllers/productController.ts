@@ -526,8 +526,8 @@ export class ProductController {
         return;
       }
       
-      // Set a longer timeout for this operation (30 minutes)
-      req.setTimeout(1800000);
+      // Set a longer timeout for this operation (60 minutes for 20k+ products)
+      req.setTimeout(3600000);
       
       // Send initial response to client with chunked transfer encoding
       res.writeHead(200, {
@@ -543,35 +543,18 @@ export class ProductController {
         total: productIds.length
       }) + '\n');
       
-      // Process products in batches
-      const BATCH_SIZE = 50;
+      // Smaller batch size for large volume processing
+      const BATCH_SIZE = 25; 
       let processed = 0;
       let totalSuccesses = 0;
       let totalFailures = 0;
       const failureDetails = new Map();
       
-      // Keep track of assigned attributes for the final response
-      const productsWithAttributes: Array<{
-        id: string;
-        title?: string;
-        attributes: {
-          category: string;
-          color: string;
-          size: string;
-          gender: string;
-          ageGroup: string;
-        };
-        variants?: Array<{
-          id: string;
-          title?: string;
-          attributes: {
-            color: string;
-            size: string;
-            gender: string;
-            ageGroup: string;
-          };
-        }>;
-      }> = [];
+      // Track batch results instead of holding all products in memory
+      const attributeBatchResults = [];
+      let currentBatchAttributes = [];
+      let lastReportedProgress = 0;
+      const PROGRESS_REPORT_INTERVAL = 1000; // Report every 1000 products
       
       for (let i = 0; i < productIds.length; i += BATCH_SIZE) {
         const batch = productIds.slice(i, i + BATCH_SIZE);
@@ -585,7 +568,8 @@ export class ProductController {
             timestamp: new Date().toISOString(),
             batchSize: batch.length,
             batchNumber,
-            totalBatches
+            totalBatches,
+            progress: Math.round((i / productIds.length) * 100)
           }) + '\n');
           
           // Get preview of attributes first to capture what will be assigned
@@ -594,36 +578,54 @@ export class ProductController {
           // Process each product in the batch to detect and set attributes
           const result = await this.productService.autoUpdateGoogleAttributes(batch);
           
-          // Add successfully processed products to our attribute tracking
-          preview.products.forEach(product => {
-            if (result.updatedProducts.includes(product.id)) {
-              productsWithAttributes.push({
-                id: product.id,
-                title: product.title,
+          // Add successfully processed products to the current batch
+          currentBatchAttributes = preview.products
+            .filter(product => result.updatedProducts.includes(product.id))
+            .map(product => ({
+              id: product.id,
+              title: product.title,
+              attributes: {
+                category: product.detectedAttributes.category || '',
+                color: product.detectedAttributes.color || '',
+                size: product.detectedAttributes.size || '',
+                gender: product.detectedAttributes.gender || '',
+                ageGroup: product.detectedAttributes.ageGroup || ''
+              },
+              variants: product.variants?.map(variant => ({
+                id: variant.id,
+                title: variant.title,
                 attributes: {
-                  category: product.detectedAttributes.category || '',
-                  color: product.detectedAttributes.color || '',
-                  size: product.detectedAttributes.size || '',
-                  gender: product.detectedAttributes.gender || '',
-                  ageGroup: product.detectedAttributes.ageGroup || ''
-                },
-                variants: product.variants?.map(variant => ({
-                  id: variant.id,
-                  title: variant.title,
-                  attributes: {
-                    color: variant.detectedAttributes.color || '',
-                    size: variant.detectedAttributes.size || '',
-                    gender: variant.detectedAttributes.gender || '',
-                    ageGroup: variant.detectedAttributes.ageGroup || ''
-                  }
-                }))
-              });
-            }
-          });
+                  color: variant.detectedAttributes.color || '',
+                  size: variant.detectedAttributes.size || '',
+                  gender: variant.detectedAttributes.gender || '',
+                  ageGroup: variant.detectedAttributes.ageGroup || ''
+                }
+              }))
+            }));
           
           processed += batch.length;
           totalSuccesses += result.updatedProducts?.length || 0;
           totalFailures += result.failedProducts?.length || 0;
+          
+          // Stream batch attributes immediately to reduce memory pressure
+          if (currentBatchAttributes.length > 0) {
+            attributeBatchResults.push({
+              batchNumber,
+              count: currentBatchAttributes.length,
+              products: currentBatchAttributes
+            });
+            
+            // Stream this batch of attributes to the client
+            res.write(JSON.stringify({
+              status: 'attributes_batch',
+              timestamp: new Date().toISOString(),
+              batchNumber,
+              products: currentBatchAttributes
+            }) + '\n');
+            
+            // Clear batch after sending to prevent memory build-up
+            currentBatchAttributes = [];
+          }
           
           // Collect failure details
           if (result.failedProducts && result.failedProducts.length > 0) {
@@ -644,23 +646,26 @@ export class ProductController {
             }
           }
           
-          // Send progress update
-          res.write(JSON.stringify({
-            status: 'batch_completed',
-            message: `Processed ${processed} of ${productIds.length} products`,
-            timestamp: new Date().toISOString(),
-            total: productIds.length,
-            processed,
-            successes: totalSuccesses,
-            failures: totalFailures,
-            batchResults: {
-              success: result.success,
-              updatedCount: result.updatedProducts?.length || 0,
-              failedCount: result.failedProducts?.length || 0,
-              batchNumber,
-              totalBatches
-            }
-          }) + '\n');
+          // Only send progress updates at intervals to reduce payload size 
+          const shouldReportProgress = 
+            (processed - lastReportedProgress >= PROGRESS_REPORT_INTERVAL) || 
+            (i + BATCH_SIZE >= productIds.length); // Always report at the end
+            
+          if (shouldReportProgress) {
+            // Send progress update
+            res.write(JSON.stringify({
+              status: 'progress_update',
+              message: `Processed ${processed} of ${productIds.length} products`,
+              timestamp: new Date().toISOString(),
+              total: productIds.length,
+              processed,
+              successes: totalSuccesses,
+              failures: totalFailures,
+              progress: Math.round((processed / productIds.length) * 100)
+            }) + '\n');
+            
+            lastReportedProgress = processed;
+          }
         } catch (error) {
           // Handle errors for this batch
           totalFailures += batch.length;
@@ -685,9 +690,11 @@ export class ProductController {
           processed += batch.length;
         }
         
-        // Add a small delay between batches
+        // Add a delay between batches for rate limiting
         if (i + BATCH_SIZE < productIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Adaptive delay based on batch size: less delay for smaller batch size
+          const delayMs = 500;
+          await new Promise(resolve => setTimeout(resolve, delayMs));
         }
       }
       
@@ -696,7 +703,7 @@ export class ProductController {
         .map(([error, count]) => `- ${error}: ${count} products`)
         .join('\n');
       
-      // Send final completion message
+      // Send final completion message - no need to include full product data as it was streamed in batches
       res.write(JSON.stringify({
         status: 'completed',
         message: `Completed auto-updating Google attributes for ${processed} products`,
@@ -706,7 +713,10 @@ export class ProductController {
         successes: totalSuccesses,
         failures: totalFailures,
         errorSummary: totalFailures > 0 ? errorSummary : null,
-        products: productsWithAttributes
+        summary: {
+          totalBatches: attributeBatchResults.length,
+          totalProductsWithAttributes: attributeBatchResults.reduce((sum, batch) => sum + batch.count, 0)
+        }
       }) + '\n');
       
       res.end();
