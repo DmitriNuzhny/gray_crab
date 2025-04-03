@@ -2,6 +2,7 @@ import './config/env'; // Import environment config first
 import express from 'express';
 import cors from 'cors';
 import productRoutes from './routes/productRoutes';
+import syncRoutes from './routes/syncRoutes';
 import { env } from './config/env';
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true })); // Also increase
 
 // Routes
 app.use('/api/products', productRoutes);
+app.use('/api/sync', syncRoutes);
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

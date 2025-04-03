@@ -463,24 +463,41 @@ export class StoreService {
       const productIds = await this.getAllProducts();
       const updatedProducts: string[] = [];
       const failedProducts: string[] = [];
-      const batchSize = 10; // Process 10 products at a time
+      const errorMap = new Map<string, number>(); // Track error types
 
-      // Process products in batches
-      for (let i = 0; i < productIds.length; i += batchSize) {
-        const batch = productIds.slice(i, i + batchSize);
-        const updatePromises = batch.map(async (productId) => {
-          try {
-            await this.updateProductSalesChannels(productId, salesChannels);
-            updatedProducts.push(productId);
-          } catch (error) {
-            failedProducts.push(productId);
+      // Process products SEQUENTIALLY to avoid rate limiting
+      for (let i = 0; i < productIds.length; i++) {
+        const productId = productIds[i];
+        try {
+          // Log progress every 10 products
+          if (i % 10 === 0) {
+            console.log(`Processing product ${i + 1}/${productIds.length}`);
           }
-        });
-
-        await Promise.all(updatePromises);
+          
+          await this.updateProductSalesChannels(productId, salesChannels);
+          updatedProducts.push(productId);
+        } catch (error) {
+          failedProducts.push(productId);
+          
+          // Track error types for better reporting
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const currentCount = errorMap.get(errorMessage) || 0;
+          errorMap.set(errorMessage, currentCount + 1);
+          
+          console.error(`Failed to update product ${productId} sales channels:`, errorMessage);
+        }
       }
 
-      const message = `Updated ${updatedProducts.length} products${failedProducts.length > 0 ? `, ${failedProducts.length} products failed` : ''}`;
+      // Build error summary for the response message
+      let errorSummary = '';
+      if (errorMap.size > 0) {
+        errorSummary = '\nError summary:\n' + 
+          Array.from(errorMap.entries())
+            .map(([error, count]) => `- ${error}: ${count} products`)
+            .join('\n');
+      }
+
+      const message = `Updated ${updatedProducts.length} products${failedProducts.length > 0 ? `, ${failedProducts.length} products failed` : ''}${errorSummary}`;
       
       return {
         success: failedProducts.length === 0,
