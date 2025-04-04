@@ -75,11 +75,6 @@ yarn start
 ```
 - Returns an operation ID to check status and process results
 
-#### Check Bulk Operation Status
-- **GET** `/api/products/bulk-operations/:operationId`
-- Checks the status of a bulk operation by ID
-- Returns status information including completion status and result URL
-
 #### Process Bulk Operation for Sales Channels
 - **POST** `/api/products/process-bulk-operation-sales-channels`
 - Processes the results of a completed bulk operation to update sales channels

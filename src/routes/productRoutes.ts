@@ -9,7 +9,6 @@ router.get('/sales-channels', productController.getAllSalesChannels.bind(product
 router.get('/products-missing-channels', productController.getProductsMissingChannels.bind(productController));
 router.get('/products-with-google-youtube-missing-attributes', productController.getProductsWithGoogleYouTubeErrors.bind(productController));
 router.get('/products-with-faire-channel', productController.getProductsWithFaireChannel.bind(productController));
-router.get('/bulk-operations/:operationId', productController.checkBulkOperationStatus.bind(productController));
 
 // Add redirect from previously updated URL to newest URL for backward compatibility
 router.get('/products-with-google-missing-attributes', (req, res) => {

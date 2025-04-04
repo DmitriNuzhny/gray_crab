@@ -146,32 +146,6 @@ export class ProductController {
     }
   };
 
-  checkBulkOperationStatus = async (req: Request, res: Response) => {
-    try {
-      const { operationId } = req.params;
-      
-      if (!operationId) {
-        return res.status(400).json({
-          success: false,
-          message: 'Operation ID is required'
-        });
-      }
-      
-      const status = await this.storeService.checkBulkOperationStatus(operationId);
-      
-      res.status(200).json({
-        success: true,
-        operationId,
-        ...status
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: error instanceof Error ? error.message : 'Failed to check operation status'
-      });
-    }
-  };
-
   bulkUpdateSalesChannelsByIds = async (req: Request, res: Response) => {
     try {
       const { productIds, salesChannels } = req.body;
