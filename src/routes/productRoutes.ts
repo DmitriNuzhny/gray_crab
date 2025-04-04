@@ -8,6 +8,8 @@ const productController = new ProductController();
 router.get('/sales-channels', productController.getAllSalesChannels.bind(productController));
 router.get('/products-missing-channels', productController.getProductsMissingChannels.bind(productController));
 router.get('/products-with-google-youtube-missing-attributes', productController.getProductsWithGoogleYouTubeErrors.bind(productController));
+router.get('/products-with-faire-channel', productController.getProductsWithFaireChannel.bind(productController));
+router.get('/bulk-operations/:operationId', productController.checkBulkOperationStatus.bind(productController));
 
 // Add redirect from old URL to new URL for backward compatibility
 router.get('/products-with-google-errors', (req, res) => {
@@ -23,6 +25,7 @@ router.get('/', productController.getAllProducts.bind(productController));
 
 // POST endpoints
 router.post('/bulk-update-sales-channels', productController.bulkUpdateSalesChannels.bind(productController));
+router.post('/process-bulk-operation-sales-channels', productController.processBulkOperationSalesChannels.bind(productController));
 router.post('/bulk-update-sales-channels-by-ids', productController.bulkUpdateSalesChannelsByIds.bind(productController));
 router.post('/bulk-update-google-attributes', productController.bulkUpdateGoogleAttributes.bind(productController));
 router.post('/auto-update-google-attributes', productController.autoUpdateGoogleAttributes.bind(productController));

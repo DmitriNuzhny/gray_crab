@@ -39,14 +39,135 @@ export class ProductController {
         });
       }
 
+      // Start the bulk operation using the optimized approach
       const result = await this.storeService.bulkUpdateSalesChannels(salesChannels);
-      res.json(result);
+      
+      res.json({
+        success: true,
+        message: result.message,
+        operationId: result.operationId
+      });
     } catch (error) {
       res.status(500).json({ 
         success: false, 
-        message: error instanceof Error ? error.message : 'Failed to bulk update sales channels',
-        updatedProducts: [],
-        failedProducts: []
+        message: error instanceof Error ? error.message : 'Failed to start bulk update operation',
+      });
+    }
+  };
+
+  processBulkOperationSalesChannels = async (req: Request, res: Response) => {
+    try {
+      const { operationId, salesChannels } = req.body;
+      
+      if (!operationId || !Array.isArray(salesChannels)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Operation ID and salesChannels array are required'
+        });
+      }
+      
+      // Set a longer timeout for processing a large catalog
+      req.setTimeout(3600000); // 1 hour
+      
+      // Check the operation status first
+      const status = await this.storeService.checkBulkOperationStatus(operationId);
+      
+      if (status.status !== 'COMPLETED') {
+        return res.status(400).json({
+          success: false,
+          message: `The bulk operation is not completed yet. Current status: ${status.status}. Please wait and try again later.`,
+          operationStatus: status
+        });
+      }
+      
+      // Use chunked response for real-time updates
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
+      });
+      
+      // Send initial status
+      res.write(JSON.stringify({
+        status: 'processing',
+        message: `Starting to process ${status.objectCount || 'many'} products`,
+        timestamp: new Date().toISOString(),
+      }) + '\n');
+      
+      // Process the operation
+      try {
+        // Send periodic updates
+        const sendUpdate = (message: string) => {
+          res.write(JSON.stringify({
+            status: 'processing',
+            message,
+            timestamp: new Date().toISOString(),
+          }) + '\n');
+        };
+        
+        // Override console.log to also send updates to the client
+        const originalLog = console.log;
+        console.log = (...args) => {
+          originalLog(...args);
+          sendUpdate(args.join(' '));
+        };
+        
+        // Process the operation
+        const result = await this.storeService.processBulkOperationForSalesChannels(operationId, salesChannels);
+        
+        // Restore console.log
+        console.log = originalLog;
+        
+        // Send final result
+        res.write(JSON.stringify({
+          status: 'completed',
+          success: result.success,
+          message: result.message,
+          updatedCount: result.updatedCount,
+          failedCount: result.failedCount,
+          timestamp: new Date().toISOString(),
+        }) + '\n');
+        
+        res.end();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        res.write(JSON.stringify({
+          status: 'error',
+          success: false,
+          message: `Error processing bulk operation: ${errorMessage}`,
+          timestamp: new Date().toISOString(),
+        }) + '\n');
+        res.end();
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to process bulk operation'
+      });
+    }
+  };
+
+  checkBulkOperationStatus = async (req: Request, res: Response) => {
+    try {
+      const { operationId } = req.params;
+      
+      if (!operationId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Operation ID is required'
+        });
+      }
+      
+      const status = await this.storeService.checkBulkOperationStatus(operationId);
+      
+      res.status(200).json({
+        success: true,
+        operationId,
+        ...status
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to check operation status'
       });
     }
   };
@@ -898,4 +1019,58 @@ export class ProductController {
       }
     }
   };
+
+  async getProductsWithFaireChannel(req: Request, res: Response) {
+    try {
+      console.log('Getting products with Faire sales channel');
+      
+      // Set headers for streaming response
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      
+      // Start the response with an opening bracket
+      res.write('{"status":"processing","message":"Fetching products with Faire: Sell Wholesale sales channel","products":[');
+      
+      // Start a counter for products
+      let productCount = 0;
+      
+      // Execute the service method to get Faire products
+      const faireProducts = await this.storeService.getProductsWithFaireSalesChannel();
+      
+      // Write each product ID to the response
+      for (const productId of faireProducts) {
+        // Add comma for all but the first product
+        if (productCount > 0) {
+          res.write(',');
+        }
+        
+        // Write the product ID
+        res.write(`"${productId}"`);
+        productCount++;
+      }
+      
+      // Close the JSON array and add summary data
+      res.write(`],"totalCount":${productCount},"completed":true}`);
+      res.end();
+    } catch (error) {
+      console.error('Error in getProductsWithFaireChannel controller:', error);
+      
+      // If response headers have been sent, try to write an error
+      if (res.headersSent) {
+        try {
+          res.write(`],"error":${JSON.stringify(error instanceof Error ? error.message : 'Unknown error')},"completed":false}`);
+          res.end();
+        } catch (e) {
+          console.error('Error ending response stream:', e);
+        }
+      } else {
+        // Standard error response
+        res.status(500).json({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Unknown error',
+          completed: false
+        });
+      }
+    }
+  }
 } 

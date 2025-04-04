@@ -456,38 +456,221 @@ export class StoreService {
   async bulkUpdateSalesChannels(salesChannels: string[]): Promise<{ 
     success: boolean; 
     message: string; 
-    updatedProducts: string[]; 
-    failedProducts: string[]; 
+    operationId: string;
   }> {
     try {
-      const productIds = await this.getAllProducts();
-      const updatedProducts: string[] = [];
-      const failedProducts: string[] = [];
-      const errorMap = new Map<string, number>(); // Track error types
-
-      // Process products SEQUENTIALLY to avoid rate limiting
-      for (let i = 0; i < productIds.length; i++) {
-        const productId = productIds[i];
-        try {
-          // Log progress every 10 products
-          if (i % 10 === 0) {
-            console.log(`Processing product ${i + 1}/${productIds.length}`);
+      // Get publication IDs for the sales channels
+      const publicationMap = await this.getPublicationIds();
+      const publicationIdsToPublish = salesChannels
+        .filter(channel => publicationMap.has(channel))
+        .map(channel => publicationMap.get(channel)!);
+      
+      if (publicationIdsToPublish.length === 0) {
+        throw new Error(`No valid publication IDs found for channels: ${salesChannels.join(', ')}`);
+      }
+      
+      console.log(`Found ${publicationIdsToPublish.length} publication IDs for channels: ${salesChannels.join(', ')}`);
+      
+      // Create a bulk operation that will process all products
+      const query = `
+        mutation {
+          bulkOperationRunQuery(
+            query: """
+              {
+                products {
+                  edges {
+                    node {
+                      id
+                    }
+                  }
+                }
+              }
+            """
+          ) {
+            bulkOperation {
+              id
+              status
+            }
+            userErrors {
+              field
+              message
+            }
           }
-          
-          await this.updateProductSalesChannels(productId, salesChannels);
-          updatedProducts.push(productId);
+        }
+      `;
+      
+      // Use the makeRequest method with retry logic
+      const response = await this.makeRequest(
+        this.graphqlUrl,
+        { query },
+        3, // 3 retries
+        60000 // 60 second timeout
+      );
+      
+      if (response.data.errors) {
+        console.error('GraphQL errors for bulk operation:', JSON.stringify(response.data.errors));
+        throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
+      }
+      
+      // Check if the expected structure exists
+      if (!response.data.data || 
+          !response.data.data.bulkOperationRunQuery || 
+          !response.data.data.bulkOperationRunQuery.bulkOperation) {
+        console.error('Unexpected response structure:', JSON.stringify(response.data));
+        throw new Error('Bulk operation failed: Unexpected response structure from Shopify API');
+      }
+      
+      const bulkOperation = response.data.data.bulkOperationRunQuery.bulkOperation;
+      const operationId = bulkOperation.id;
+      
+      return {
+        success: true,
+        message: `Started bulk operation ${operationId} to get all products. Once completed, call the process-bulk-operation endpoint with this operation ID to publish products to channels: ${salesChannels.join(", ")}`,
+        operationId
+      };
+    } catch (error) {
+      console.error('Error starting bulk operation:', error);
+      throw new Error(`Failed to start bulk update operation: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  async processBulkOperationForSalesChannels(operationId: string, salesChannels: string[]): Promise<{
+    success: boolean;
+    message: string;
+    updatedCount: number;
+    failedCount: number;
+  }> {
+    try {
+      // First check if the operation is complete
+      const status = await this.checkBulkOperationStatus(operationId);
+      
+      if (status.status !== 'COMPLETED') {
+        throw new Error(`Bulk operation is not completed yet. Current status: ${status.status}`);
+      }
+      
+      if (!status.url) {
+        throw new Error('Bulk operation completed but no result URL available');
+      }
+      
+      // Download the results file
+      console.log(`Downloading bulk operation results from ${status.url}`);
+      const response = await axios.get(status.url);
+      const resultsData = response.data;
+      
+      // Process the results file - it's a JSONL file (one JSON object per line)
+      const productIds: string[] = [];
+      const lines = resultsData.trim().split('\n');
+      
+      for (const line of lines) {
+        try {
+          const product = JSON.parse(line);
+          if (product.id) {
+            // Extract the numeric ID from the gid
+            const numericId = product.id.split('/').pop();
+            productIds.push(numericId);
+          }
         } catch (error) {
-          failedProducts.push(productId);
-          
-          // Track error types for better reporting
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          const currentCount = errorMap.get(errorMessage) || 0;
-          errorMap.set(errorMessage, currentCount + 1);
-          
-          console.error(`Failed to update product ${productId} sales channels:`, errorMessage);
+          console.error('Error parsing line:', line, error);
         }
       }
-
+      
+      console.log(`Found ${productIds.length} products to update`);
+      
+      // Get publication IDs for the sales channels
+      const publicationMap = await this.getPublicationIds();
+      const publicationIdsToPublish = salesChannels
+        .filter(channel => publicationMap.has(channel))
+        .map(channel => publicationMap.get(channel)!);
+      
+      // Now update the products in batches (MUCH faster than one-by-one)
+      // Reduce batch size to avoid DOCUMENT_TOKEN_LIMIT_EXCEEDED error
+      const batchSize = 15; // Reduce from 100 to 15 products per batch
+      // Reduce the number of mutations per batch further when we have multiple channels
+      const effectiveBatchSize = Math.max(5, Math.floor(20 / publicationIdsToPublish.length));
+      
+      console.log(`Using batch size of ${effectiveBatchSize} products with ${publicationIdsToPublish.length} channels`);
+      
+      let updatedCount = 0;
+      let failedCount = 0;
+      const errorMap = new Map<string, number>();
+      
+      for (let i = 0; i < productIds.length; i += effectiveBatchSize) {
+        const batch = productIds.slice(i, i + effectiveBatchSize);
+        
+        // Log progress every 100 products
+        if (i % 100 === 0 || i === 0) {
+          console.log(`Processing products ${i + 1}-${Math.min(i + effectiveBatchSize, productIds.length)} of ${productIds.length}`);
+        }
+        
+        try {
+          // Build a mutation with all products in the batch
+          const mutations: string[] = [];
+          
+          // For each product, create a publish mutation for each channel
+          for (let j = 0; j < batch.length; j++) {
+            const productId = batch[j];
+            const gqlProductId = `gid://shopify/Product/${productId}`;
+            
+            // Add a publish mutation for each publication
+            for (let k = 0; k < publicationIdsToPublish.length; k++) {
+              const publicationId = publicationIdsToPublish[k];
+              mutations.push(`
+                m${j}_${k}: publishablePublish(
+                  id: "${gqlProductId}",
+                  input: {
+                    publicationId: "${publicationId}"
+                  }
+                ) {
+                  publishable {
+                    ... on Product {
+                      id
+                    }
+                  }
+                  userErrors {
+                    field
+                    message
+                  }
+                }
+              `);
+            }
+          }
+          
+          // Create a batch mutation query with all operations
+          const batchQuery = `
+            mutation {
+              ${mutations.join('\n')}
+            }
+          `;
+          
+          // Execute the bulk mutations
+          const response = await this.makeRequest(
+            this.graphqlUrl,
+            { query: batchQuery },
+            3, // 3 retries
+            120000 // 2 minute timeout for large batches
+          );
+          
+          if (response.data.errors) {
+            failedCount += batch.length;
+            console.error(`GraphQL errors processing batch:`, JSON.stringify(response.data.errors));
+            const errorMessage = response.data.errors[0].message;
+            const currentCount = errorMap.get(errorMessage) || 0;
+            errorMap.set(errorMessage, currentCount + batch.length);
+          } else {
+            updatedCount += batch.length;
+          }
+        } catch (error) {
+          failedCount += batch.length;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const currentCount = errorMap.get(errorMessage) || 0;
+          errorMap.set(errorMessage, currentCount + batch.length);
+          console.error(`Error processing batch:`, errorMessage);
+        }
+        
+        // Add a small delay between batches to prevent rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
       // Build error summary for the response message
       let errorSummary = '';
       if (errorMap.size > 0) {
@@ -496,18 +679,63 @@ export class StoreService {
             .map(([error, count]) => `- ${error}: ${count} products`)
             .join('\n');
       }
-
-      const message = `Updated ${updatedProducts.length} products${failedProducts.length > 0 ? `, ${failedProducts.length} products failed` : ''}${errorSummary}`;
       
       return {
-        success: failedProducts.length === 0,
-        message,
-        updatedProducts,
-        failedProducts
+        success: failedCount === 0,
+        message: `Updated ${updatedCount} products to sales channels: ${salesChannels.join(', ')}. Failed: ${failedCount} products.${errorSummary}`,
+        updatedCount,
+        failedCount
       };
     } catch (error) {
-      throw new Error(`Failed to bulk update sales channels: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error processing bulk operation results:', error);
+      throw new Error(`Failed to process bulk operation results: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+  
+  async checkBulkOperationStatus(operationId: string): Promise<{
+    status: string;
+    completedAt?: string;
+    objectCount?: number;
+    url?: string;
+    errorCode?: string;
+  }> {
+    const query = `
+      {
+        node(id: "${operationId}") {
+          ... on BulkOperation {
+            id
+            status
+            errorCode
+            createdAt
+            completedAt
+            objectCount
+            fileSize
+            url
+            partialDataUrl
+          }
+        }
+      }
+    `;
+
+    const response = await this.makeRequest(
+      this.graphqlUrl,
+      { query },
+      3,
+      30000
+    );
+
+    if (response.data.errors) {
+      throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
+    }
+
+    const operation = response.data.data.node;
+    return {
+      status: operation.status,
+      completedAt: operation.completedAt,
+      objectCount: operation.objectCount,
+      url: operation.url || operation.partialDataUrl,
+      errorCode: operation.errorCode
+    };
   }
 
   async updateGoogleAttributes(entityId: string, attributes: GoogleProductAttributes): Promise<boolean> {
@@ -1131,5 +1359,130 @@ export class StoreService {
     }
     
     return productsWithIssues;
+  }
+
+  async getProductsWithFaireSalesChannel(): Promise<string[]> {
+    try {
+      console.log('Getting products with Faire: Sell Wholesale sales channel');
+      
+      // First get publications to find the Faire publication ID
+      const query = `
+        {
+          publications(first: 20) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `;
+      
+      const response = await this.makeRequest(
+        this.graphqlUrl,
+        { query },
+        3,
+        30000
+      );
+      
+      if (response.data.errors) {
+        console.error('GraphQL errors getting publications:', JSON.stringify(response.data.errors));
+        throw new Error(`GraphQL error: ${response.data.errors[0].message}`);
+      }
+      
+      // Find the Faire publication
+      const publications = response.data.data.publications.edges;
+      console.log(`Found ${publications.length} publications:`);
+      publications.forEach((pub: any) => {
+        console.log(`- ${pub.node.name} (${pub.node.id})`);
+      });
+      
+      const fairePublication = publications.find((edge: any) => 
+        edge.node.name === 'Faire: Sell Wholesale'
+      );
+      
+      if (!fairePublication) {
+        throw new Error('Faire: Sell Wholesale publication not found');
+      }
+      
+      const fairePublicationId = fairePublication.node.id;
+      console.log(`Found Faire publication ID: ${fairePublicationId}`);
+      
+      // Use pagination to fetch all products, then filter those published to Faire
+      const faireProductIds: string[] = [];
+      let hasNextPage = true;
+      let cursor = null;
+      const pageSize = 250; // Maximum allowed by Shopify
+      
+      console.log('Starting to fetch products and checking for Faire publication...');
+      
+      while (hasNextPage) {
+        // Query products with their publications
+        const productsQuery = `
+          {
+            products(first: ${pageSize}${cursor ? `, after: "${cursor}"` : ''}) {
+              pageInfo {
+                hasNextPage
+              }
+              edges {
+                cursor
+                node {
+                  id
+                  title
+                  publishedOnPublication(publicationId: "${fairePublicationId}")
+                }
+              }
+            }
+          }
+        `;
+        
+        const productsResponse = await this.makeRequest(
+          this.graphqlUrl,
+          { query: productsQuery },
+          3,
+          60000
+        );
+        
+        if (productsResponse.data.errors) {
+          console.error('GraphQL errors fetching products:', JSON.stringify(productsResponse.data.errors));
+          throw new Error(`GraphQL error: ${productsResponse.data.errors[0].message}`);
+        }
+        
+        const productsData = productsResponse.data.data.products;
+        const edges = productsData.edges || [];
+        
+        if (edges.length > 0) {
+          // Get the cursor for the next page
+          cursor = edges[edges.length - 1].cursor;
+          
+          // Extract product IDs for those published to Faire
+          let faireBatchCount = 0;
+          for (const edge of edges) {
+            if (edge.node.publishedOnPublication === true) {
+              const numericId = edge.node.id.split('/').pop();
+              faireProductIds.push(numericId);
+              faireBatchCount++;
+            }
+          }
+          
+          console.log(`Fetched ${edges.length} products, found ${faireBatchCount} with Faire publication in this batch. Total so far: ${faireProductIds.length}`);
+        }
+        
+        // Check if there are more pages
+        hasNextPage = productsData.pageInfo.hasNextPage;
+        
+        // Add a small delay to avoid rate limiting
+        if (hasNextPage) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      console.log(`Found ${faireProductIds.length} products published to Faire: Sell Wholesale sales channel`);
+      return faireProductIds;
+    } catch (error) {
+      console.error('Error getting products with Faire channel:', error);
+      throw error;
+    }
   }
 } 
