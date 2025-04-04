@@ -11,11 +11,6 @@ router.get('/products-with-google-youtube-missing-attributes', productController
 router.get('/products-with-faire-channel', productController.getProductsWithFaireChannel.bind(productController));
 router.get('/bulk-operations/:operationId', productController.checkBulkOperationStatus.bind(productController));
 
-// Add redirect from old URL to new URL for backward compatibility
-router.get('/products-with-google-errors', (req, res) => {
-  res.redirect('products-with-google-youtube-missing-attributes');
-});
-
 // Add redirect from previously updated URL to newest URL for backward compatibility
 router.get('/products-with-google-missing-attributes', (req, res) => {
   res.redirect('products-with-google-youtube-missing-attributes');

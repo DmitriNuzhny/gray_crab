@@ -768,10 +768,22 @@ export class StoreService {
           continue;
         }
         
+        // Map camelCase keys to snake_case for mm-google-shopping
+        let mmKey;
+        
+        // Special case for category and ageGroup
+        if (key === 'category') {
+          mmKey = 'google_product_category';
+        } else if (key === 'ageGroup') {
+          mmKey = 'age_group';
+        } else {
+          mmKey = key;
+        }
+        
         // Create metafield input for each attribute
         const metafieldInput = {
-          namespace: "google",
-          key: key,
+          namespace: "mm-google-shopping",
+          key: mmKey,
           value: value,
           type: "single_line_text_field"
         };
@@ -1084,13 +1096,13 @@ export class StoreService {
 
   async getProductsWithGoogleYouTubeErrors(): Promise<string[]> {
     try {
-      console.log(`Starting to fetch products with missing or incorrect Google & YouTube attributes...`);
+      console.log(`Starting to fetch products with Google & YouTube shopping errors...`);
       
       // We'll use bulk queries with pagination to efficiently process products
       const productsWithIssues: string[] = [];
       let hasNextPage = true;
       let cursor: string | undefined;
-      const pageSize = 50; // Process 50 products at a time in bulk
+      const pageSize = 25; // Reduced from 50 to 25 to avoid throttling
       
       // Get publication ID for Google & YouTube
       const publicationMap = await this.getPublicationIds();
@@ -1107,9 +1119,13 @@ export class StoreService {
       console.log(`Starting to query products in batches of ${pageSize}...`);
       
       // Process products in pages
+      let currentPage = 1;
       while (hasNextPage) {
         try {
+          console.log(`Processing page ${currentPage}...`);
+          
           // Construct a bulk query that processes multiple products at once
+          // Only check mm-google-shopping namespace
           const query = `
             {
               products(first: ${pageSize}${cursor ? `, after: "${cursor}"` : ''}) {
@@ -1129,11 +1145,27 @@ export class StoreService {
                         }
                       }
                     }
-                    metafields(first: 10, namespace: "google") {
+                    metafields(first: 20, namespace: "mm-google-shopping") {
                       edges {
                         node {
                           key
                           value
+                        }
+                      }
+                    }
+                    variants(first: 10) {
+                      edges {
+                        node {
+                          id
+                          title
+                          metafields(first: 20, namespace: "mm-google-shopping") {
+                            edges {
+                              node {
+                                key
+                                value
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -1151,13 +1183,26 @@ export class StoreService {
           const response = await this.makeRequest(
             this.graphqlUrl,
             { query },
-            3, // retries
-            60000 // longer timeout for bulk query
+            5, // increased retries
+            90000 // increased timeout
           );
           
           if (response.data.errors) {
             console.error('GraphQL query errors:', response.data.errors);
-            // Continue to next page despite errors
+            
+            // Check if the error is due to throttling
+            const isThrottled = response.data.errors.some((error: any) => 
+              error.extensions?.code === 'THROTTLED' || error.message.includes('Throttled')
+            );
+            
+            if (isThrottled) {
+              // Wait significantly longer when throttled (10 seconds)
+              console.log('Rate limited by Shopify API, waiting 10 seconds before retrying...');
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              continue; // Retry the same page without advancing the cursor
+            }
+            
+            // Continue to next page despite other errors
           } else {
             // Process the batch of products
             const products = response.data.data.products.edges;
@@ -1171,7 +1216,8 @@ export class StoreService {
               for (const product of products) {
                 const productId = product.node.id.split('/').pop();
                 const publications = product.node.productPublications?.edges || [];
-                const metafields = product.node.metafields?.edges || [];
+                const productMetafields = product.node.metafields?.edges || [];
+                const variants = product.node.variants?.edges || [];
                 
                 // Check if product has Google & YouTube channel
                 const hasGoogleYoutubeChannel = publications.some((pub: any) => {
@@ -1179,37 +1225,102 @@ export class StoreService {
                   return channelName.toLowerCase().includes('google') && channelName.toLowerCase().includes('youtube');
                 });
                 
-                // If product has the Google & YouTube channel, check required Google attributes
+                // Only check products published to Google & YouTube
                 if (hasGoogleYoutubeChannel) {
-                  // Required Google attributes
-                  const requiredAttributes = ['category', 'color', 'size', 'gender', 'ageGroup'];
-                  const missingAttributes = [];
+                  // Check for required attributes based on number of variants
+                  const isMultiVariant = variants.length > 1;
                   
-                  // Check which attributes are missing or empty
-                  for (const attr of requiredAttributes) {
-                    const metafield = metafields.find((m: any) => m.node.key === attr);
-                    if (!metafield || !metafield.node.value.trim()) {
-                      missingAttributes.push(attr);
+                  if (isMultiVariant) {
+                    // Multi-variant products: 
+                    // - Require category at product level
+                    // - At least one variant needs all other attributes
+                    
+                    // Check for google_product_category at product level
+                    const hasCategory = productMetafields.some(
+                      (m: any) => m.node.key === 'google_product_category' && m.node.value && m.node.value.trim() !== ''
+                    );
+                    
+                    if (!hasCategory) {
+                      productsWithIssues.push(productId);
+                      continue;
                     }
-                  }
-                  
-                  // If any required attributes are missing, add to the list
-                  if (missingAttributes.length > 0) {
-                    productsWithIssues.push(productId);
+                    
+                    // Check if any variant has all required attributes
+                    let anyVariantHasAllAttributes = false;
+                    
+                    for (const variant of variants) {
+                      const variantMetafields = variant.node.metafields?.edges || [];
+                      
+                      // Check for required variant-level metafields
+                      const hasColor = variantMetafields.some(
+                        (m: any) => m.node.key === 'color' && m.node.value && m.node.value.trim() !== ''
+                      );
+                      
+                      const hasSize = variantMetafields.some(
+                        (m: any) => m.node.key === 'size' && m.node.value && m.node.value.trim() !== ''
+                      );
+                      
+                      const hasGender = variantMetafields.some(
+                        (m: any) => m.node.key === 'gender' && m.node.value && m.node.value.trim() !== ''
+                      );
+                      
+                      const hasAgeGroup = variantMetafields.some(
+                        (m: any) => m.node.key === 'age_group' && m.node.value && m.node.value.trim() !== ''
+                      );
+                      
+                      if (hasColor && hasSize && hasGender && hasAgeGroup) {
+                        anyVariantHasAllAttributes = true;
+                        break;
+                      }
+                    }
+                    
+                    if (!anyVariantHasAllAttributes) {
+                      productsWithIssues.push(productId);
+                    }
+                  } else {
+                    // Single-variant products:
+                    // - All attributes at product level
+                    
+                    const hasCategory = productMetafields.some(
+                      (m: any) => m.node.key === 'google_product_category' && m.node.value && m.node.value.trim() !== ''
+                    );
+                    
+                    const hasColor = productMetafields.some(
+                      (m: any) => m.node.key === 'color' && m.node.value && m.node.value.trim() !== ''
+                    );
+                    
+                    const hasSize = productMetafields.some(
+                      (m: any) => m.node.key === 'size' && m.node.value && m.node.value.trim() !== ''
+                    );
+                    
+                    const hasGender = productMetafields.some(
+                      (m: any) => m.node.key === 'gender' && m.node.value && m.node.value.trim() !== ''
+                    );
+                    
+                    const hasAgeGroup = productMetafields.some(
+                      (m: any) => m.node.key === 'age_group' && m.node.value && m.node.value.trim() !== ''
+                    );
+                    
+                    if (!hasCategory || !hasColor || !hasSize || !hasGender || !hasAgeGroup) {
+                      productsWithIssues.push(productId);
+                    }
                   }
                 }
               }
               
-              console.log(`Processed ${products.length} products, found ${productsWithIssues.length} with missing Google & YouTube attributes so far`);
+              console.log(`Processed ${products.length} products, found ${productsWithIssues.length} with Google & YouTube shopping errors so far`);
+              
+              // Increment page counter for logging
+              currentPage++;
             } else {
               console.log('No products returned in this batch, ending pagination');
               hasNextPage = false;
             }
           }
           
-          // Add a small delay between pages to avoid rate limiting
+          // Add a longer delay between pages to avoid rate limiting
           if (hasNextPage) {
-            const delay = 500;
+            const delay = 2000;
             console.log(`Waiting ${delay}ms before fetching next page...`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
@@ -1227,11 +1338,11 @@ export class StoreService {
         }
       }
       
-      console.log(`Completed scan. Found ${productsWithIssues.length} products with missing Google & YouTube attributes.`);
+      console.log(`Completed scan. Found ${productsWithIssues.length} products with Google & YouTube shopping errors.`);
       return productsWithIssues;
     } catch (error) {
       console.error('Error in getProductsWithGoogleYouTubeErrors:', error);
-      throw new Error(`Failed to fetch products with Google & YouTube attribute issues: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to fetch products with Google & YouTube errors: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -1241,8 +1352,7 @@ export class StoreService {
   ): Promise<string[]> {
     console.log(`Retrying with smaller batch size: ${pageSize}`);
     
-    // Same implementation but with smaller batch size, simplified version of the main method
-    // This is a fallback for when we encounter errors with larger batches
+    // Setup for pagination
     const productsWithIssues: string[] = [];
     let hasNextPage = true;
     let cursor = startCursor;
@@ -1257,7 +1367,7 @@ export class StoreService {
     }
     
     const googleYoutubePublicationId = googleYoutubePublication[1];
-      
+    
     // Process products in pages
     while (hasNextPage) {
       const query = `
@@ -1279,11 +1389,27 @@ export class StoreService {
                     }
                   }
                 }
-                metafields(first: 10, namespace: "google") {
+                metafields(first: 20, namespace: "mm-google-shopping") {
                   edges {
                     node {
                       key
                       value
+                    }
+                  }
+                }
+                variants(first: 10) {
+                  edges {
+                    node {
+                      id
+                      title
+                      metafields(first: 20, namespace: "mm-google-shopping") {
+                        edges {
+                          node {
+                            key
+                            value
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -1314,7 +1440,8 @@ export class StoreService {
           for (const product of products) {
             const productId = product.node.id.split('/').pop();
             const publications = product.node.productPublications?.edges || [];
-            const metafields = product.node.metafields?.edges || [];
+            const productMetafields = product.node.metafields?.edges || [];
+            const variants = product.node.variants?.edges || [];
             
             // Check if product has Google & YouTube channel
             const hasGoogleYoutubeChannel = publications.some((pub: any) => {
@@ -1322,28 +1449,90 @@ export class StoreService {
               return channelName.toLowerCase().includes('google') && channelName.toLowerCase().includes('youtube');
             });
             
-            // If product has the Google & YouTube channel, check required Google attributes
+            // Only check products published to Google & YouTube
             if (hasGoogleYoutubeChannel) {
-              // Required Google attributes
-              const requiredAttributes = ['google_product_category', 'color', 'size', 'gender', 'age_group'];
-              const missingAttributes = [];
+              // Check for required attributes based on number of variants
+              const isMultiVariant = variants.length > 1;
               
-              // Check which attributes are missing or empty
-              for (const attr of requiredAttributes) {
-                const metafield = metafields.find((m: any) => m.node.key === attr);
-                if (!metafield || !metafield.node.value.trim()) {
-                  missingAttributes.push(attr);
+              if (isMultiVariant) {
+                // Multi-variant products: 
+                // - Require category at product level
+                // - At least one variant needs all other attributes
+                
+                // Check for google_product_category at product level
+                const hasCategory = productMetafields.some(
+                  (m: any) => m.node.key === 'google_product_category' && m.node.value && m.node.value.trim() !== ''
+                );
+                
+                if (!hasCategory) {
+                  productsWithIssues.push(productId);
+                  continue;
                 }
-              }
-              
-              // If any required attributes are missing, add to the list
-              if (missingAttributes.length > 0) {
-                productsWithIssues.push(productId);
+                
+                // Check if any variant has all required attributes
+                let anyVariantHasAllAttributes = false;
+                
+                for (const variant of variants) {
+                  const variantMetafields = variant.node.metafields?.edges || [];
+                  
+                  // Check for required variant-level metafields
+                  const hasColor = variantMetafields.some(
+                    (m: any) => m.node.key === 'color' && m.node.value && m.node.value.trim() !== ''
+                  );
+                  
+                  const hasSize = variantMetafields.some(
+                    (m: any) => m.node.key === 'size' && m.node.value && m.node.value.trim() !== ''
+                  );
+                  
+                  const hasGender = variantMetafields.some(
+                    (m: any) => m.node.key === 'gender' && m.node.value && m.node.value.trim() !== ''
+                  );
+                  
+                  const hasAgeGroup = variantMetafields.some(
+                    (m: any) => m.node.key === 'age_group' && m.node.value && m.node.value.trim() !== ''
+                  );
+                  
+                  if (hasColor && hasSize && hasGender && hasAgeGroup) {
+                    anyVariantHasAllAttributes = true;
+                    break;
+                  }
+                }
+                
+                if (!anyVariantHasAllAttributes) {
+                  productsWithIssues.push(productId);
+                }
+              } else {
+                // Single-variant products:
+                // - All attributes at product level
+                
+                const hasCategory = productMetafields.some(
+                  (m: any) => m.node.key === 'google_product_category' && m.node.value && m.node.value.trim() !== ''
+                );
+                
+                const hasColor = productMetafields.some(
+                  (m: any) => m.node.key === 'color' && m.node.value && m.node.value.trim() !== ''
+                );
+                
+                const hasSize = productMetafields.some(
+                  (m: any) => m.node.key === 'size' && m.node.value && m.node.value.trim() !== ''
+                );
+                
+                const hasGender = productMetafields.some(
+                  (m: any) => m.node.key === 'gender' && m.node.value && m.node.value.trim() !== ''
+                );
+                
+                const hasAgeGroup = productMetafields.some(
+                  (m: any) => m.node.key === 'age_group' && m.node.value && m.node.value.trim() !== ''
+                );
+                
+                if (!hasCategory || !hasColor || !hasSize || !hasGender || !hasAgeGroup) {
+                  productsWithIssues.push(productId);
+                }
               }
             }
           }
           
-          console.log(`Processed ${products.length} products, found ${productsWithIssues.length} with missing Google & YouTube attributes so far`);
+          console.log(`Processed ${products.length} products, found ${productsWithIssues.length} with Google & YouTube shopping errors so far`);
         } else {
           hasNextPage = false;
         }
