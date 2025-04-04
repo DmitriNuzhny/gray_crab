@@ -1,6 +1,6 @@
-# Product Sales Channel Bulk Update API
+# Enterprise Multi-Channel Product Management API
 
-A Node.js backend API for managing product sales channels with bulk update capabilities. This API acts as a proxy to your store's API, providing bulk update functionality for product sales channels.
+A robust Node.js backend solution for efficiently managing product distribution across multiple sales channels. This enterprise-grade API streamlines the synchronization of 30,000+ products across various platforms including Shopify, TikTok, Google, and Faire.
 
 ## Setup
 
