@@ -404,14 +404,14 @@ export class ProductController {
       const productIds = await this.productService.getProductsMissingChannels();
       res.json({
         success: true,
-        message: 'Products missing sales channels fetched successfully',
+        message: 'Products missing Google & YouTube or TikTok sales channels fetched successfully',
         count: productIds.length,
         data: productIds
       });
     } catch (error) {
       res.status(500).json({
         success: false,
-        message: 'Error fetching products missing sales channels',
+        message: 'Error fetching products missing Google & YouTube or TikTok sales channels',
         error: error instanceof Error ? error.message : 'Unknown error'
       });
     }

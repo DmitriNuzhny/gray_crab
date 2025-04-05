@@ -972,13 +972,20 @@ export class StoreService {
                 const publicationsEdges = product.node.productPublications?.edges || [];
                 const productChannels = publicationsEdges.map((edge: any) => edge.node.channel.name);
                 
-                // Check if this product is missing any channels
-                if (productChannels.length < allSalesChannels.length) {
+                // Check if this product is missing Google & YouTube or TikTok channels
+                const hasGoogleYouTube = productChannels.some(
+                  (channel: string) => channel.toLowerCase().includes('google') && channel.toLowerCase().includes('youtube')
+                );
+                const hasTikTok = productChannels.some(
+                  (channel: string) => channel.toLowerCase().includes('tiktok')
+                );
+                
+                if (!hasGoogleYouTube || !hasTikTok) {
                   productsMissingChannels.push(productId);
                 }
               }
               
-              console.log(`Processed ${products.length} products, found ${productsMissingChannels.length} with missing channels so far`);
+              console.log(`Processed ${products.length} products, found ${productsMissingChannels.length} missing Google & YouTube or TikTok channels so far`);
             } else {
               console.log('No products returned in this batch, ending pagination');
               hasNextPage = false;
@@ -1005,7 +1012,7 @@ export class StoreService {
         }
       }
       
-      console.log(`Completed scan. Found ${productsMissingChannels.length} products missing channels.`);
+      console.log(`Completed scan. Found ${productsMissingChannels.length} products missing Google & YouTube or TikTok channels.`);
       return productsMissingChannels;
     } catch (error) {
       console.error('Error in getProductsMissingChannels:', error);
@@ -1071,12 +1078,20 @@ export class StoreService {
             const publicationsEdges = product.node.productPublications?.edges || [];
             const productChannels = publicationsEdges.map((edge: any) => edge.node.channel.name);
             
-            if (productChannels.length < allSalesChannels.length) {
+            // Check if this product is missing Google & YouTube or TikTok channels
+            const hasGoogleYouTube = productChannels.some(
+              (channel: string) => channel.toLowerCase().includes('google') && channel.toLowerCase().includes('youtube')
+            );
+            const hasTikTok = productChannels.some(
+              (channel: string) => channel.toLowerCase().includes('tiktok')
+            );
+            
+            if (!hasGoogleYouTube || !hasTikTok) {
               productsMissingChannels.push(productId);
             }
           }
           
-          console.log(`Processed ${products.length} products, found ${productsMissingChannels.length} with missing channels so far`);
+          console.log(`Processed ${products.length} products, found ${productsMissingChannels.length} missing Google & YouTube or TikTok channels so far`);
         } else {
           hasNextPage = false;
         }

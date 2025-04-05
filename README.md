@@ -101,7 +101,7 @@ yarn start
 
 #### Get Products Missing Channels
 - **GET** `/api/products/products-missing-channels`
-- Returns IDs of all products that are missing one or more sales channels
+- Returns IDs of all products that are missing either Google & YouTube or TikTok sales channels
 
 #### Get Products With Google/YouTube Missing Attributes
 - **GET** `/api/products/products-with-google-youtube-missing-attributes`
