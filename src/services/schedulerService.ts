@@ -64,17 +64,21 @@ export class SchedulerService {
       this.isRunning = true;
       console.log('Starting to process newly created products');
 
-      // Get products created in the last 15 minutes (to ensure we don't miss any)
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      // Get products created in the last 10 minutes (to ensure we don't miss any)
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
       const query = `
         query {
-          products(first: 100, query: "created_at:>${fifteenMinutesAgo.toISOString()}") {
+          products(first: 250, query: "created_at:>${tenMinutesAgo.toISOString()}") {
             edges {
               node {
                 id
                 title
                 createdAt
               }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
             }
           }
         }
@@ -91,14 +95,61 @@ export class SchedulerService {
         return;
       }
 
-      const products = response.data.data.products.edges.map((edge: any) => edge.node);
+      let products = response.data.data.products.edges.map((edge: any) => edge.node);
+      let hasNextPage = response.data.data.products.pageInfo.hasNextPage;
+      let cursor = response.data.data.products.pageInfo.endCursor;
+      
+      // Continue fetching if there are more pages
+      while (hasNextPage) {
+        console.log(`Fetching next page of products with cursor: ${cursor}`);
+        
+        const nextPageQuery = `
+          query {
+            products(first: 250, query: "created_at:>${tenMinutesAgo.toISOString()}", after: "${cursor}") {
+              edges {
+                node {
+                  id
+                  title
+                  createdAt
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        `;
+        
+        const nextPageResponse = await this.storeService.executeGraphQLQuery(
+          nextPageQuery,
+          3,
+          30000
+        );
+        
+        if (nextPageResponse.data.errors) {
+          console.error('GraphQL errors when fetching next page of products:', JSON.stringify(nextPageResponse.data.errors));
+          break;
+        }
+        
+        const nextPageProducts = nextPageResponse.data.data.products.edges.map((edge: any) => edge.node);
+        products = [...products, ...nextPageProducts];
+        
+        hasNextPage = nextPageResponse.data.data.products.pageInfo.hasNextPage;
+        cursor = nextPageResponse.data.data.products.pageInfo.endCursor;
+        
+        // Add a small delay to avoid rate limiting
+        if (hasNextPage) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
       
       if (products.length === 0) {
-        console.log('No new products found in the last 15 minutes');
+        console.log('No new products found in the last 10 minutes');
         return;
       }
 
-      console.log(`Found ${products.length} new products created in the last 15 minutes`);
+      console.log(`Found ${products.length} new products created in the last 10 minutes`);
 
       // Extract product IDs and ensure they're in the correct format
       const productIds = products.map((product: any) => {
@@ -112,7 +163,7 @@ export class SchedulerService {
       });
 
       // Update sales channels for these products
-      const salesChannels = ['Google & YouTube', 'TikTok'];
+      const salesChannels = ['Online Store', 'Google & YouTube', 'TikTok'];
       
       console.log(`Updating sales channels for ${productIds.length} products to: ${salesChannels.join(', ')}`);
       

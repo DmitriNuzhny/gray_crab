@@ -49,11 +49,12 @@ router.post('/product-created', verifyShopifyWebhook, async (req, res) => {
     
     // Use the full product ID directly
     await storeService.updateProductSalesChannels(productId, [
+      'Online Store',
       'Google & YouTube',
       'TikTok'
     ]);
     
-    console.log(`Successfully added product ${productId} to Google & YouTube and TikTok sales channels`);
+    console.log(`Successfully added product ${productId} to Online Store, Google & YouTube and TikTok sales channels`);
     
     res.status(200).json({ success: true });
   } catch (error) {
