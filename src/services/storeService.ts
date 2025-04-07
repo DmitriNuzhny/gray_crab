@@ -345,8 +345,10 @@ export class StoreService {
       // Get publication IDs - this will use the cache if available
       const publicationMap = await this.getPublicationIds();
       
-      // Format the product ID for GraphQL
-      const gqlProductId = `gid://shopify/Product/${productId}`;
+      // Format the product ID for GraphQL if it doesn't already have the prefix
+      const gqlProductId = productId.startsWith('gid://shopify/Product/') 
+        ? productId 
+        : `gid://shopify/Product/${productId}`;
       
       // Create all the mutations in advance
       const mutations = [];
@@ -1688,5 +1690,22 @@ export class StoreService {
       console.error('Error getting products with Faire channel:', error);
       throw error;
     }
+  }
+
+  /**
+   * Execute a GraphQL query with retry logic
+   * This is a public wrapper around the private makeRequest method
+   */
+  public async executeGraphQLQuery(
+    query: string,
+    maxRetries: number = 3,
+    timeout: number = 30000
+  ): Promise<any> {
+    return this.makeRequest(
+      this.graphqlUrl,
+      { query },
+      maxRetries,
+      timeout
+    );
   }
 } 

@@ -5,6 +5,7 @@ import productRoutes from './routes/productRoutes';
 import syncRoutes from './routes/syncRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import { env } from './config/env';
+import { SchedulerService } from './services/schedulerService';
 
 const app = express();
 
@@ -18,12 +19,16 @@ app.use('/api/products', productRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/webhooks', webhookRoutes);
 
+// Initialize scheduler service
+const schedulerService = new SchedulerService();
+schedulerService.startNewProductsScheduler();
+
 // Error handling middleware
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(err.stack);
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Unhandled error:', err);
   res.status(500).json({
     success: false,
-    message: 'Internal Server Error',
+    message: 'Internal server error',
     error: err.message
   });
 });

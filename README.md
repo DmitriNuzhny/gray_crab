@@ -202,6 +202,18 @@ This API acts as a proxy to your store's API, providing the following features:
 - Handles bulk operations efficiently
 - Provides error handling and retry logic
 - Rate-limiting to prevent API throttling
+- Automatic scheduling to add new products to sales channels
+
+### Scheduled Tasks
+
+The API includes a scheduler that automatically runs every 10 minutes to:
+- Fetch newly created products (created in the last 15 minutes)
+- Add these products to the 'Google & YouTube' and 'TikTok' sales channels
+- Log the results of the operation
+
+This ensures that all new products are automatically added to the required sales channels without manual intervention.
+
+The scheduler uses node-cron to manage the timing of tasks, providing a more robust and flexible scheduling solution than simple intervals.
 
 Make sure to configure the following environment variables:
 - `STORE_API_URL`: The base URL of your store's API
