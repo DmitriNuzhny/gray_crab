@@ -16,7 +16,7 @@ export class SchedulerService {
   }
 
   /**
-   * Start the scheduler to fetch newly created products every 10 minutes
+   * Start the scheduler to fetch newly created products every 5 minutes
    */
   public startNewProductsScheduler(): void {
     if (this.cronJob) {
@@ -24,16 +24,16 @@ export class SchedulerService {
       return;
     }
 
-    console.log('Starting scheduler to fetch newly created products every 10 minutes');
+    console.log('Starting scheduler to fetch newly created products every 5 minutes');
     
     // Run immediately on start
     this.processNewProducts().catch(error => {
       console.error('Error in initial run of new products scheduler:', error);
     });
 
-    // Then schedule to run every 10 minutes using node-cron
-    // Cron expression: "*/10 * * * *" means "every 10 minutes"
-    this.cronJob = cron.schedule('*/10 * * * *', () => {
+    // Then schedule to run every 5 minutes using node-cron
+    // Cron expression: "*/5 * * * *" means "every 5 minutes"
+    this.cronJob = cron.schedule('*/5 * * * *', () => {
       this.processNewProducts().catch(error => {
         console.error('Error in scheduled run of new products scheduler:', error);
       });
@@ -64,11 +64,11 @@ export class SchedulerService {
       this.isRunning = true;
       console.log('Starting to process newly created products');
 
-      // Get products created in the last 10 minutes (to ensure we don't miss any)
-      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      // Get products created in the last 5 minutes (to ensure we don't miss any)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
       const query = `
         query {
-          products(first: 250, query: "created_at:>${tenMinutesAgo.toISOString()}") {
+          products(first: 250, query: "created_at:>${fiveMinutesAgo.toISOString()}") {
             edges {
               node {
                 id
@@ -105,7 +105,7 @@ export class SchedulerService {
         
         const nextPageQuery = `
           query {
-            products(first: 250, query: "created_at:>${tenMinutesAgo.toISOString()}", after: "${cursor}") {
+            products(first: 250, query: "created_at:>${fiveMinutesAgo.toISOString()}", after: "${cursor}") {
               edges {
                 node {
                   id
@@ -145,11 +145,11 @@ export class SchedulerService {
       }
       
       if (products.length === 0) {
-        console.log('No new products found in the last 10 minutes');
+        console.log('No new products found in the last 5 minutes');
         return;
       }
 
-      console.log(`Found ${products.length} new products created in the last 10 minutes`);
+      console.log(`Found ${products.length} new products created in the last 5 minutes`);
 
       // Extract product IDs and ensure they're in the correct format
       const productIds = products.map((product: any) => {
