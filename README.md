@@ -19,6 +19,8 @@ cp .env.example .env
 PORT=3000
 STORE_API_URL=https://your-store-api.com
 STORE_API_KEY=your-store-api-key-here
+SHOPIFY_WEBHOOK_SECRET=your-shopify-webhook-secret-here
+SHOPIFY_STORE=your-store.myshopify.com
 ```
 
 4. Start the development server:
@@ -164,6 +166,14 @@ yarn start
 }
 ```
 
+### Webhook Endpoints
+
+#### Product Creation Webhook
+- **POST** `/api/webhooks/product-created`
+- Automatically adds newly created products to 'Google & YouTube' and 'TikTok' sales channels
+- This endpoint is designed to be called by Shopify when a new product is created
+- Requires proper Shopify webhook authentication headers
+
 ## Response Format
 
 All responses follow this format:
@@ -195,4 +205,6 @@ This API acts as a proxy to your store's API, providing the following features:
 
 Make sure to configure the following environment variables:
 - `STORE_API_URL`: The base URL of your store's API
-- `STORE_API_KEY`: The authentication key for your store's API 
+- `STORE_API_KEY`: The authentication key for your store's API
+- `SHOPIFY_STORE`: Your Shopify store domain (e.g., your-store.myshopify.com)
+- `SHOPIFY_WEBHOOK_SECRET`: The secret key for verifying Shopify webhooks
