@@ -1,7 +1,5 @@
 import { StoreService } from './storeService';
 import { ProductService } from './productService';
-import { env } from '../config/env';
-import { UpdateResponse } from '../types/product';
 import * as cron from 'node-cron';
 
 export class SchedulerService {
