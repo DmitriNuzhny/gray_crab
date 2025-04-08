@@ -16,7 +16,7 @@ export class SchedulerService {
   }
 
   /**
-   * Start the scheduler to fetch newly created products every 5 minutes
+   * Start the scheduler to fetch newly created products every 20 minutes
    */
   public startNewProductsScheduler(): void {
     if (this.cronJob) {
@@ -24,16 +24,16 @@ export class SchedulerService {
       return;
     }
 
-    console.log('Starting scheduler to fetch newly created products every 5 minutes');
+    console.log('Starting scheduler to fetch the last 150 products every 20 minutes');
     
     // Run immediately on start
     this.processNewProducts().catch(error => {
       console.error('Error in initial run of new products scheduler:', error);
     });
 
-    // Then schedule to run every 5 minutes using node-cron
-    // Cron expression: "*/5 * * * *" means "every 5 minutes"
-    this.cronJob = cron.schedule('*/5 * * * *', () => {
+    // Then schedule to run every 20 minutes using node-cron
+    // Cron expression: "*/20 * * * *" means "every 20 minutes"
+    this.cronJob = cron.schedule('*/20 * * * *', () => {
       this.processNewProducts().catch(error => {
         console.error('Error in scheduled run of new products scheduler:', error);
       });
@@ -64,11 +64,10 @@ export class SchedulerService {
       this.isRunning = true;
       console.log('Starting to process newly created products');
 
-      // Get products created in the last 5 minutes (to ensure we don't miss any)
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      // Get the last 150 products sorted by creation date
       const query = `
         query {
-          products(first: 250, query: "created_at:>${fiveMinutesAgo.toISOString()}") {
+          products(first: 150, sortKey: CREATED_AT, reverse: true) {
             edges {
               node {
                 id
@@ -76,14 +75,11 @@ export class SchedulerService {
                 createdAt
               }
             }
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
           }
         }
       `;
 
+      console.log('Executing GraphQL query to fetch the last 150 products...');
       const response = await this.storeService.executeGraphQLQuery(
         query,
         3,
@@ -91,65 +87,26 @@ export class SchedulerService {
       );
 
       if (response.data.errors) {
-        console.error('GraphQL errors when fetching new products:', JSON.stringify(response.data.errors));
+        console.error('GraphQL errors when fetching products:', JSON.stringify(response.data.errors));
         return;
       }
 
-      let products = response.data.data.products.edges.map((edge: any) => edge.node);
-      let hasNextPage = response.data.data.products.pageInfo.hasNextPage;
-      let cursor = response.data.data.products.pageInfo.endCursor;
-      
-      // Continue fetching if there are more pages
-      while (hasNextPage) {
-        console.log(`Fetching next page of products with cursor: ${cursor}`);
-        
-        const nextPageQuery = `
-          query {
-            products(first: 250, query: "created_at:>${fiveMinutesAgo.toISOString()}", after: "${cursor}") {
-              edges {
-                node {
-                  id
-                  title
-                  createdAt
-                }
-              }
-              pageInfo {
-                hasNextPage
-                endCursor
-              }
-            }
-          }
-        `;
-        
-        const nextPageResponse = await this.storeService.executeGraphQLQuery(
-          nextPageQuery,
-          3,
-          30000
-        );
-        
-        if (nextPageResponse.data.errors) {
-          console.error('GraphQL errors when fetching next page of products:', JSON.stringify(nextPageResponse.data.errors));
-          break;
-        }
-        
-        const nextPageProducts = nextPageResponse.data.data.products.edges.map((edge: any) => edge.node);
-        products = [...products, ...nextPageProducts];
-        
-        hasNextPage = nextPageResponse.data.data.products.pageInfo.hasNextPage;
-        cursor = nextPageResponse.data.data.products.pageInfo.endCursor;
-        
-        // Add a small delay to avoid rate limiting
-        if (hasNextPage) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
+      const products = response.data.data.products.edges.map((edge: any) => edge.node);
       
       if (products.length === 0) {
-        console.log('No new products found in the last 5 minutes');
+        console.log('No products found');
         return;
       }
 
-      console.log(`Found ${products.length} new products created in the last 5 minutes`);
+      console.log(`Found ${products.length} products`);
+      
+      // Log the creation times of the first few products
+      if (products.length > 0) {
+        console.log('Sample of product creation times:');
+        products.slice(0, 5).forEach((product: any, index: number) => {
+          console.log(`Product ${index + 1}: ${product.title} - Created at: ${product.createdAt}`);
+        });
+      }
 
       // Extract product IDs and ensure they're in the correct format
       const productIds = products.map((product: any) => {
@@ -185,7 +142,7 @@ export class SchedulerService {
       }
 
     } catch (error) {
-      console.error('Error processing new products:', error);
+      console.error('Error processing products:', error);
     } finally {
       this.isRunning = false;
     }
