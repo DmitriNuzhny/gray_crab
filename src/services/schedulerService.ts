@@ -41,6 +41,17 @@ export class SchedulerService {
   }
 
   /**
+   * Stop the scheduler
+   */
+  public stopScheduler(): void {
+    if (this.cronJob) {
+      this.cronJob.stop();
+      this.cronJob = null;
+      console.log('Scheduler stopped');
+    }
+  }
+
+  /**
    * Process newly created products and update their sales channels
    */
   private async processNewProducts(): Promise<void> {
