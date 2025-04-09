@@ -29,7 +29,7 @@ git push
 2. Click "Add New..." and select "Project"
 3. Import your GitHub repository
 4. Configure project settings:
-   - Build Command: `npm run build` (this should be pre-filled)
+   - Build Command: `yarn build` (important: make sure it's using yarn)
    - Output Directory: `dist` (this should be auto-detected)
    - Install Command: `yarn install` (since your project uses Yarn)
    - Root Directory: `.` (default)
@@ -40,6 +40,7 @@ git push
      - `STORE_API_KEY`
      - `SHOPIFY_STORE`
      - `SHOPIFY_WEBHOOK_SECRET` (if used)
+   - Ensure `VERCEL=true` is set (added automatically by Vercel)
 6. Click "Deploy"
 
 ### 3. Alternative: Deploy via Vercel CLI
@@ -47,6 +48,9 @@ git push
 If you prefer using the command line:
 
 ```bash
+# Install Vercel CLI if you haven't already
+npm install -g vercel
+
 # Login to Vercel
 vercel login
 
@@ -56,6 +60,11 @@ vercel
 # Follow the prompts to configure your deployment
 ```
 
+During the CLI setup, you'll be prompted to configure your project. Make sure to:
+- Confirm the build command is `yarn build`
+- Set the output directory to `dist` if asked
+- Configure your environment variables when prompted
+
 ### 4. Important Notes
 
 1. **Cron/Scheduler Service**: Vercel serverless functions have limitations with long-running processes. We've added a conditional check to prevent the scheduler from running in the serverless environment. For proper scheduled tasks, consider using:
@@ -64,7 +73,7 @@ vercel
 
 2. **Environment Variables**: Make sure all required environment variables are set in the Vercel dashboard.
 
-3. **Project Structure**: The deployment is configured to use `dist/vercel.js` as the entry point, which is built from `src/vercel.ts`.
+3. **Project Structure**: The deployment is configured to use `dist/app.js` as the entry point.
 
 ### 5. Verifying Deployment
 
@@ -78,10 +87,28 @@ After deployment:
 
 ### 6. Troubleshooting
 
-If you encounter issues:
+If you encounter "DEPLOYMENT_NOT_FOUND" or similar errors:
 
-1. Check Vercel logs in the dashboard under "Deployments" > [your deployment] > "Functions"
-2. Verify all environment variables are correctly set
-3. Ensure your code works locally before deployment
+1. **Check your vercel.json**: Make sure it points to files that actually exist after the build process.
+   - The current configuration points to `dist/app.js`, which should be created during the build.
 
-For further assistance, refer to the [Vercel documentation](https://vercel.com/docs). 
+2. **Verify the build process**: Run `yarn build` locally and check if the expected files are generated in the `dist` directory.
+
+3. **Check Vercel logs**: In the Vercel dashboard, go to your project, then Deployments > [your deployment] > Functions to view detailed logs.
+
+4. **Check environment variables**: Ensure all required environment variables are set correctly.
+
+5. **Try with the Vercel CLI**: Sometimes the CLI provides more detailed error messages.
+   ```bash
+   vercel --debug
+   ```
+
+6. **Project settings**: In the Vercel dashboard, under Project Settings > General, make sure:
+   - Framework Preset is set to "Other" or "Node.js"
+   - Build Command is set to `yarn build`
+   - Output Directory is set to `dist`
+
+7. **API folder structure**: Make sure your API folder structure matches what Vercel expects.
+   - The included `api/index.js` file helps redirect requests to your Express app.
+
+For further assistance, refer to the [Vercel documentation](https://vercel.com/docs) or contact Vercel support. 
