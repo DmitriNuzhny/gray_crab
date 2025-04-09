@@ -1,5 +1,8 @@
-// This file exists to help Vercel recognize the API routes
+// This file serves as the entry point for Vercel serverless functions
 // It redirects all API requests to our main Express application
 
-// Note: This requires that the app is built with 'yarn build' before deployment
-module.exports = require('../dist/app.js'); 
+// Import the compiled Express app
+const app = require('../dist/app.js').default;
+
+// Export a handler for Vercel to use
+module.exports = app; 

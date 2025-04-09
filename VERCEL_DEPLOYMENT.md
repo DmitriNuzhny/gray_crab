@@ -28,11 +28,7 @@ git push
 1. Go to the [Vercel Dashboard](https://vercel.com/dashboard)
 2. Click "Add New..." and select "Project"
 3. Import your GitHub repository
-4. Configure project settings:
-   - Build Command: `yarn build` (important: make sure it's using yarn)
-   - Output Directory: `dist` (this should be auto-detected)
-   - Install Command: `yarn install` (since your project uses Yarn)
-   - Root Directory: `.` (default)
+4. The configuration is now defined in the `vercel.json` file, so the build settings in the UI will be ignored
 5. Environment Variables: Add all your environment variables from `.env` file
    - Click "Environment Variables" and add each variable from your `.env` file
    - At minimum, add:
@@ -60,12 +56,25 @@ vercel
 # Follow the prompts to configure your deployment
 ```
 
-During the CLI setup, you'll be prompted to configure your project. Make sure to:
-- Confirm the build command is `yarn build`
-- Set the output directory to `dist` if asked
-- Configure your environment variables when prompted
+During the CLI setup, most settings will be taken from your `vercel.json` file, but make sure to configure your environment variables when prompted.
 
-### 4. Important Notes
+### 4. About Build Settings Warning
+
+You might see a warning like:
+
+```
+WARN! Due to `builds` existing in your configuration file, the Build and Development Settings defined in your Project Settings will not apply. Learn More: https://vercel.link/unused-build-settings
+```
+
+Or with our new configuration:
+
+```
+WARN! Due to `buildCommand` existing in your configuration file, the Build and Development Settings defined in your Project Settings will not apply. Learn More: https://vercel.link/unused-build-settings
+```
+
+This is completely normal and not an error. It simply means that Vercel is using the settings from your `vercel.json` file instead of any settings configured in the Vercel dashboard UI.
+
+### 5. Important Notes
 
 1. **Cron/Scheduler Service**: Vercel serverless functions have limitations with long-running processes. We've added a conditional check to prevent the scheduler from running in the serverless environment. For proper scheduled tasks, consider using:
    - Vercel Cron Jobs (in the Vercel dashboard)
@@ -73,9 +82,9 @@ During the CLI setup, you'll be prompted to configure your project. Make sure to
 
 2. **Environment Variables**: Make sure all required environment variables are set in the Vercel dashboard.
 
-3. **Project Structure**: The deployment is configured to use `dist/app.js` as the entry point.
+3. **Project Structure**: The deployment is now configured to use the `api/index.js` file as the entry point, which imports your compiled Express app.
 
-### 5. Verifying Deployment
+### 6. Verifying Deployment
 
 After deployment:
 
@@ -85,30 +94,21 @@ After deployment:
    - `https://your-app.vercel.app/api/sync`
    - `https://your-app.vercel.app/api/webhooks`
 
-### 6. Troubleshooting
+### 7. Troubleshooting
 
 If you encounter "DEPLOYMENT_NOT_FOUND" or similar errors:
 
-1. **Check your vercel.json**: Make sure it points to files that actually exist after the build process.
-   - The current configuration points to `dist/app.js`, which should be created during the build.
+1. **Check Vercel logs**: In the Vercel dashboard, go to your project, then Deployments > [your deployment] > Functions to view detailed logs.
 
 2. **Verify the build process**: Run `yarn build` locally and check if the expected files are generated in the `dist` directory.
 
-3. **Check Vercel logs**: In the Vercel dashboard, go to your project, then Deployments > [your deployment] > Functions to view detailed logs.
+3. **Check environment variables**: Ensure all required environment variables are set correctly.
 
-4. **Check environment variables**: Ensure all required environment variables are set correctly.
-
-5. **Try with the Vercel CLI**: Sometimes the CLI provides more detailed error messages.
+4. **Try with the Vercel CLI**: Sometimes the CLI provides more detailed error messages.
    ```bash
    vercel --debug
    ```
 
-6. **Project settings**: In the Vercel dashboard, under Project Settings > General, make sure:
-   - Framework Preset is set to "Other" or "Node.js"
-   - Build Command is set to `yarn build`
-   - Output Directory is set to `dist`
-
-7. **API folder structure**: Make sure your API folder structure matches what Vercel expects.
-   - The included `api/index.js` file helps redirect requests to your Express app.
+5. **API folder structure**: Make sure your `api/index.js` file is correctly exporting your Express app.
 
 For further assistance, refer to the [Vercel documentation](https://vercel.com/docs) or contact Vercel support. 
