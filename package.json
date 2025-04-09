@@ -1,7 +1,7 @@
 {
   "name": "gray_crab",
   "version": "1.0.0",
-  "main": "dist/app.js",
+  "main": "dist/vercel.js",
   "repository": "https://github.com/DmitriNuzhny/gray_crab.git",
   "author": "DmitriNuzhny <dmitrinuzhny@outlook.com>",
   "license": "MIT",
@@ -9,6 +9,7 @@
     "start": "node dist/app.js",
     "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
     "build": "tsc",
+    "vercel-build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
@@ -27,5 +28,8 @@
     "@types/node": "^20.11.19",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.x"
   }
 }

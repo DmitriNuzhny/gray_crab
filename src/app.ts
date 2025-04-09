@@ -19,9 +19,12 @@ app.use('/api/products', productRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/webhooks', webhookRoutes);
 
-// Initialize scheduler service
-const schedulerService = new SchedulerService();
-schedulerService.startNewProductsScheduler();
+// Initialize scheduler service - only in non-serverless environments
+// This prevents the scheduler from running in Vercel's serverless functions
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  const schedulerService = new SchedulerService();
+  schedulerService.startNewProductsScheduler();
+}
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -33,8 +36,11 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-app.listen(env.port, () => {
-  console.log(`Server is running on port ${env.port}`);
-});
+// Only start the server if we're not in a serverless environment
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(env.port, () => {
+    console.log(`Server is running on port ${env.port}`);
+  });
+}
 
 export default app; 

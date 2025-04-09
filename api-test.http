@@ -1,0 +1,18 @@
+### Test endpoints after Vercel deployment
+@baseUrl = YOUR_VERCEL_URL_HERE # Replace with your Vercel app URL once deployed
+
+### Test the products endpoint
+GET {{baseUrl}}/api/products
+Accept: application/json
+
+### Test sync endpoint 
+GET {{baseUrl}}/api/sync
+Accept: application/json
+
+### Test webhooks endpoint
+POST {{baseUrl}}/api/webhooks
+Content-Type: application/json
+
+{
+  "test": "payload"
+} 
