@@ -63,12 +63,6 @@ During the CLI setup, most settings will be taken from your `vercel.json` file, 
 You might see a warning like:
 
 ```
-WARN! Due to `builds` existing in your configuration file, the Build and Development Settings defined in your Project Settings will not apply. Learn More: https://vercel.link/unused-build-settings
-```
-
-Or with our new configuration:
-
-```
 WARN! Due to `buildCommand` existing in your configuration file, the Build and Development Settings defined in your Project Settings will not apply. Learn More: https://vercel.link/unused-build-settings
 ```
 
@@ -95,6 +89,10 @@ After deployment:
    - `https://your-app.vercel.app/api/webhooks`
 
 ### 7. Troubleshooting
+
+If you encounter schema validation errors in `vercel.json`:
+1. Make sure all properties in the file are valid according to Vercel's configuration schema
+2. Express.js is not a recognized framework in Vercel, so avoid using the `framework` property
 
 If you encounter "DEPLOYMENT_NOT_FOUND" or similar errors:
 
