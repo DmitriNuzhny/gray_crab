@@ -14,7 +14,7 @@ export class SchedulerService {
   }
 
   /**
-   * Start the scheduler to fetch newly created products every 20 minutes
+   * Start the scheduler to fetch newly created products every 30 minutes
    */
   public startNewProductsScheduler(): void {
     if (this.cronJob) {
@@ -22,16 +22,16 @@ export class SchedulerService {
       return;
     }
 
-    console.log('Starting scheduler to fetch the last 150 products every 20 minutes');
+    console.log('Starting scheduler to fetch the last 150 products every 30 minutes');
     
     // Run immediately on start
     this.processNewProducts().catch(error => {
       console.error('Error in initial run of new products scheduler:', error);
     });
 
-    // Then schedule to run every 20 minutes using node-cron
-    // Cron expression: "*/20 * * * *" means "every 20 minutes"
-    this.cronJob = cron.schedule('*/20 * * * *', () => {
+    // Then schedule to run every 30 minutes using node-cron
+    // Cron expression: "*/30 * * * *" means "every 30 minutes"
+    this.cronJob = cron.schedule('*/30 * * * *', () => {
       this.processNewProducts().catch(error => {
         console.error('Error in scheduled run of new products scheduler:', error);
       });
