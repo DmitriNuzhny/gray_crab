@@ -32,10 +32,10 @@ git push
 5. Environment Variables: Add all your environment variables from `.env` file
    - Click "Environment Variables" and add each variable from your `.env` file
    - At minimum, add:
-     - `STORE_API_URL`
-     - `STORE_API_KEY`
-     - `SHOPIFY_STORE`
-     - `SHOPIFY_WEBHOOK_SECRET` (if used)
+     - `SHOPIFY_STORE_ADMIN_API_URL`
+     - `SHOPIFY_STORE_ACCESS_TOKEN`
+     - `SHOPIFY_STORE_NAME`
+     - `SHOPIFY_STORE_WEBHOOK_SECRET` (if used)
    - Ensure `VERCEL=true` is set (added automatically by Vercel)
 6. Click "Deploy"
 

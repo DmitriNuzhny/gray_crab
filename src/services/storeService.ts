@@ -34,10 +34,10 @@ export class StoreService {
     this.graphqlUrl = `${shopUrl}/admin/api/${apiVersion}/graphql.json`;
     
     if (!this.baseUrl) {
-      throw new Error('STORE_API_URL environment variable is not set');
+      throw new Error('SHOPIFY_STORE_ADMIN_API_URL environment variable is not set');
     }
     if (!this.apiKey) {
-      throw new Error('STORE_API_KEY environment variable is not set');
+      throw new Error('SHOPIFY_STORE_ACCESS_TOKEN environment variable is not set');
     }
   }
 

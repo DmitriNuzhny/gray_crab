@@ -17,10 +17,10 @@ cp .env.example .env
 3. Update the `.env` file with your store API configuration:
 ```
 PORT=3000
-STORE_API_URL=https://your-store-api.com
-STORE_API_KEY=your-store-api-key-here
-SHOPIFY_WEBHOOK_SECRET=your-shopify-webhook-secret-here
-SHOPIFY_STORE=your-store.myshopify.com
+SHOPIFY_STORE_ADMIN_API_URL=https://your-store-api.com
+SHOPIFY_STORE_ACCESS_TOKEN=your-store-api-key-here
+SHOPIFY_STORE_WEBHOOK_SECRET=your-shopify-webhook-secret-here
+SHOPIFY_STORE_NAME=your-store.myshopify.com
 ```
 
 4. Start the development server:
@@ -216,7 +216,7 @@ This ensures that all new products are automatically added to the required sales
 The scheduler uses node-cron to manage the timing of tasks, providing a more robust and flexible scheduling solution than simple intervals.
 
 Make sure to configure the following environment variables:
-- `STORE_API_URL`: The base URL of your store's API
-- `STORE_API_KEY`: The authentication key for your store's API
-- `SHOPIFY_STORE`: Your Shopify store domain (e.g., your-store.myshopify.com)
-- `SHOPIFY_WEBHOOK_SECRET`: The secret key for verifying Shopify webhooks
+- `SHOPIFY_STORE_ADMIN_API_URL`: The base URL of your store's API
+- `SHOPIFY_STORE_ACCESS_TOKEN`: The authentication key for your store's API
+- `SHOPIFY_STORE_NAME`: Your Shopify store domain (e.g., your-store.myshopify.com)
+- `SHOPIFY_STORE_WEBHOOK_SECRET`: The secret key for verifying Shopify webhooks

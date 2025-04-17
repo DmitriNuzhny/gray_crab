@@ -69,8 +69,8 @@ export class ProductSync {
   private tiktokAccessToken: string;
 
   constructor() {
-    this.shopifyAccessToken = process.env.STORE_API_KEY || '';
-    this.shopifyStore = process.env.SHOPIFY_STORE || '';
+    this.shopifyAccessToken = process.env.SHOPIFY_STORE_ACCESS_TOKEN || '';
+    this.shopifyStore = process.env.SHOPIFY_STORE_NAME || '';
     this.tiktokAccessToken = process.env.TIKTOK_ACCESS_TOKEN || '';
 
     if (!this.shopifyAccessToken || !this.shopifyStore || !this.tiktokAccessToken) {
