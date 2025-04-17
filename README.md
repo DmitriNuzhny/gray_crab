@@ -123,9 +123,9 @@ yarn start
 {
   "productIds": ["123", "456", "789"],
   "attributes": {
-    "category": "Apparel & Accessories > Clothing",
+    "google_product_category": "Apparel & Accessories > Clothing",
     "gender": "female",
-    "ageGroup": "adult",
+    "age_group": "adult",
     "color": "black",
     "size": "M"
   }
@@ -149,7 +149,7 @@ yarn start
 ```json
 {
   "productIds": ["123", "456", "789"],
-  "attributeKey": "category",
+  "attributeKey": "google_product_category",
   "attributeValue": "Apparel & Accessories > Clothing"
 }
 ```

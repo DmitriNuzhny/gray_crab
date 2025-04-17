@@ -766,26 +766,14 @@ export class StoreService {
         }
         
         // Skip category for variants (it's product-level)
-        if (isVariant && key === 'category') {
+        if (isVariant && key === 'google_product_category') {
           continue;
-        }
-        
-        // Map camelCase keys to snake_case for mm-google-shopping
-        let mmKey;
-        
-        // Special case for category and ageGroup
-        if (key === 'category') {
-          mmKey = 'google_product_category';
-        } else if (key === 'ageGroup') {
-          mmKey = 'age_group';
-        } else {
-          mmKey = key;
         }
         
         // Create metafield input for each attribute
         const metafieldInput = {
           namespace: "mm-google-shopping",
-          key: mmKey,
+          key: key,
           value: value,
           type: "single_line_text_field"
         };
@@ -1708,4 +1696,4 @@ export class StoreService {
       timeout
     );
   }
-} 
+}

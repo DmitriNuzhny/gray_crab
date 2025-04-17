@@ -35,11 +35,11 @@ export interface UpdateResponse {
 }
 
 export interface GoogleProductAttributes {
-  category?: string;
-  color?: string;
-  size?: string;
-  gender?: string;
-  ageGroup?: string;
+  google_product_category: string;
+  color: string;
+  size: string;
+  gender: string;
+  age_group: string;
 }
 
 export interface GoogleAttributesBulkUpdateRequest {

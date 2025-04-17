@@ -680,11 +680,11 @@ export class ProductController {
               id: product.id,
               title: product.title,
               attributes: {
-                category: product.detectedAttributes.category || '',
+                google_product_category: product.detectedAttributes.google_product_category || '',
                 color: product.detectedAttributes.color || '',
                 size: product.detectedAttributes.size || '',
                 gender: product.detectedAttributes.gender || '',
-                ageGroup: product.detectedAttributes.ageGroup || ''
+                age_group: product.detectedAttributes.age_group || ''
               },
               variants: product.variants?.map(variant => ({
                 id: variant.id,
@@ -693,7 +693,7 @@ export class ProductController {
                   color: variant.detectedAttributes.color || '',
                   size: variant.detectedAttributes.size || '',
                   gender: variant.detectedAttributes.gender || '',
-                  ageGroup: variant.detectedAttributes.ageGroup || ''
+                  age_group: variant.detectedAttributes.age_group || ''
                 }
               }))
             }));

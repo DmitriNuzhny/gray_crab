@@ -449,11 +449,11 @@ export class ProductService {
           if (hasMultipleVariants) {
             // If product has multiple variants, only assign category at product level
             productAttributes = {
-              category: attributes.category,
+              google_product_category: attributes.google_product_category,
               color: '',
               size: '',
               gender: '',
-              ageGroup: ''
+              age_group: ''
             };
           } else {
             // If product has only one (default) variant, assign all attributes at product level
@@ -461,7 +461,7 @@ export class ProductService {
           }
           
           // If we couldn't determine the required category attribute, log and skip
-          if (!productAttributes.category) {
+          if (!productAttributes.google_product_category) {
             failedProducts.push(productId);
             this.incrementError(errorReasons, 'Could not determine product category');
             continue;
@@ -475,13 +475,13 @@ export class ProductService {
             for (const variant of product.variants) {
               if (variant.id) {
                 try {
-                  // For variants, we set color, size, gender, ageGroup
+                  // For variants, we set color, size, gender, age_group
                   const variantAttributes: GoogleProductAttributes = {
-                    category: '', // Category is assigned at product level
+                    google_product_category: '', // Category is assigned at product level
                     color: attributes.color,
                     size: attributes.size,
                     gender: attributes.gender,
-                    ageGroup: attributes.ageGroup
+                    age_group: attributes.age_group
                   };
                   
                   // Extract attributes from variant options when possible
@@ -530,16 +530,16 @@ export class ProductService {
                       }
                     }
                     
-                    // Check if option3 contains age group information
+                    // Check if option3 contains age_group information
                     if (option3Lower.includes('kid') || option3Lower.includes('child') || 
                         option3Lower.includes('teen') || option3Lower.includes('adult')) {
                       
                       if (option3Lower.includes('kid') || option3Lower.includes('child')) {
-                        variantAttributes.ageGroup = 'Kids';
+                        variantAttributes.age_group = 'Kids';
                       } else if (option3Lower.includes('teen')) {
-                        variantAttributes.ageGroup = 'Adult'; // Google considers teens as adults
+                        variantAttributes.age_group = 'Adult'; // Google considers teens as adults
                       } else if (option3Lower.includes('adult')) {
-                        variantAttributes.ageGroup = 'Adult';
+                        variantAttributes.age_group = 'Adult';
                       }
                     }
                   }
@@ -593,8 +593,8 @@ export class ProductService {
   
   // Helper method to validate Google attributes
   private validateGoogleAttributes(attributes: GoogleProductAttributes): boolean {
-    const { category, color, size, gender, ageGroup } = attributes;
-    return !!(category && color && size && gender && ageGroup);
+    const { google_product_category, color, size, gender, age_group } = attributes;
+    return !!(google_product_category && color && size && gender && age_group);
   }
   
   // Helper method to increment error counts
@@ -605,11 +605,11 @@ export class ProductService {
   // Helper method to detect Google attributes from product data
   private async detectGoogleAttributes(product: Product): Promise<GoogleProductAttributes> {
     const attributes: GoogleProductAttributes = {
-      category: '',
+      google_product_category: '',
       color: '',
       size: '',
       gender: '',
-      ageGroup: ''
+      age_group: ''
     };
     
     // Get the product title and any existing metadata
@@ -623,19 +623,19 @@ export class ProductService {
     // Detect product category (simplified approach - would be more sophisticated in production)
     if (product_type) {
       // Use product_type as the primary source for category
-      attributes.category = this.mapToGoogleCategory(product_type);
+      attributes.google_product_category = this.mapToGoogleCategory(product_type);
     } else if (combinedText.includes('shirt') || combinedText.includes('tshirt') || combinedText.includes('t-shirt')) {
-      attributes.category = 'Apparel & Accessories > Clothing > Shirts & Tops';
+      attributes.google_product_category = 'Apparel & Accessories > Clothing > Shirts & Tops';
     } else if (combinedText.includes('pants') || combinedText.includes('trouser')) {
-      attributes.category = 'Apparel & Accessories > Clothing > Pants';
+      attributes.google_product_category = 'Apparel & Accessories > Clothing > Pants';
     } else if (combinedText.includes('shoe') || combinedText.includes('sneaker') || combinedText.includes('footwear')) {
-      attributes.category = 'Apparel & Accessories > Shoes';
+      attributes.google_product_category = 'Apparel & Accessories > Shoes';
     } else if (combinedText.includes('jacket') || combinedText.includes('coat')) {
-      attributes.category = 'Apparel & Accessories > Clothing > Outerwear';
+      attributes.google_product_category = 'Apparel & Accessories > Clothing > Outerwear';
     } else if (combinedText.includes('dress')) {
-      attributes.category = 'Apparel & Accessories > Clothing > Dresses';
+      attributes.google_product_category = 'Apparel & Accessories > Clothing > Dresses';
     } else {
-      attributes.category = 'Apparel & Accessories > Clothing';
+      attributes.google_product_category = 'Apparel & Accessories > Clothing';
     }
     
     // Detect color
@@ -698,17 +698,17 @@ export class ProductService {
       }
     }
     
-    // Detect age group
+    // Detect age_group
     if (combinedText.includes('kid') || combinedText.includes('child') || combinedText.includes('youth') || combinedText.includes('junior')) {
       if (combinedText.includes('newborn') || combinedText.includes('infant') || combinedText.includes('baby')) {
-        attributes.ageGroup = 'Newborn';
+        attributes.age_group = 'Newborn';
       } else {
-        attributes.ageGroup = 'Kids';
+        attributes.age_group = 'Kids';
       }
     } else if (combinedText.includes('teen') || combinedText.includes('adolescent')) {
-      attributes.ageGroup = 'Adult';
+      attributes.age_group = 'Adult';
     } else {
-      attributes.ageGroup = 'Adult';
+      attributes.age_group = 'Adult';
     }
     
     return attributes;
@@ -759,9 +759,9 @@ export class ProductService {
     }
     
     // Check if the product type contains any of our known types
-    for (const [key, category] of Object.entries(typeMap)) {
+    for (const [key, google_product_category] of Object.entries(typeMap)) {
       if (lowerType.includes(key)) {
-        return category;
+        return google_product_category;
       }
     }
     
@@ -845,11 +845,11 @@ export class ProductService {
               id: productId,
               title: undefined,
               detectedAttributes: {
-                category: '',
+                google_product_category: '',
                 color: '',
                 size: '',
                 gender: '',
-                ageGroup: ''
+                age_group: ''
               }
             });
             continue;
@@ -867,11 +867,11 @@ export class ProductService {
           let productAttributes: GoogleProductAttributes;
           if (hasMultipleVariants) {
             productAttributes = {
-              category: attributes.category,
+              google_product_category: attributes.google_product_category,
               color: '',
               size: '',
               gender: '',
-              ageGroup: ''
+              age_group: ''
             };
           } else {
             productAttributes = attributes;
@@ -891,11 +891,11 @@ export class ProductService {
                 if (hasMultipleVariants) {
                   // Start with the main detected attributes
                   const variantAttributes: GoogleProductAttributes = {
-                    category: '',
+                    google_product_category: '',
                     color: attributes.color,
                     size: attributes.size,
                     gender: attributes.gender,
-                    ageGroup: attributes.ageGroup
+                    age_group: attributes.age_group
                   };
                   
                   // Customize based on variant options if possible
@@ -955,11 +955,11 @@ export class ProductService {
             id: productId,
             title: undefined,
             detectedAttributes: {
-              category: '',
+              google_product_category: '',
               color: '',
               size: '',
               gender: '',
-              ageGroup: ''
+              age_group: ''
             }
           });
         }
