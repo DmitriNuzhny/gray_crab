@@ -616,27 +616,51 @@ export class ProductService {
     const title = product.title || '';
     const tags = Array.isArray(product.tags) ? product.tags.join(' ') : (product.tags || '');
     const product_type = product.product_type || '';
+
+    // Look for Subcategory tag
+    let subcategory = '';
+    if (Array.isArray(product.tags)) {
+      const subcategoryTag = product.tags.find(tag => tag.startsWith('Subcategory-'));
+      if (subcategoryTag) {
+        subcategory = subcategoryTag.replace('Subcategory-', '');
+      }
+    }
+
+    // Map subcategory to Google product category ID
+    if (subcategory) {
+      const categoryMap: { [key: string]: string } = {
+        'Shirts': '212',  // Apparel & Accessories > Clothing > Shirts & Tops
+        'Pants': '188',   // Apparel & Accessories > Clothing > Pants
+        'Shoes': '187',   // Apparel & Accessories > Shoes
+        'Dresses': '227', // Apparel & Accessories > Clothing > Dresses
+        'Outerwear': '178', // Apparel & Accessories > Clothing > Outerwear
+        'Electronics': '222',
+        'Cameras': '141',  // Cameras & Optics
+        'Furniture': '436',
+        'Toys': '1239',   // Toys & Games
+        'Food': '412',    // Food, Beverages & Tobacco
+        'Beauty': '469',  // Health & Beauty
+        'Office': '922',  // Office Supplies
+        'Pets': '1',      // Animals & Pet Supplies
+        'Baby': '537',    // Baby & Toddler
+        'Sports': '988',  // Sporting Goods
+        'Vehicles': '888', // Vehicles & Parts
+        'Garden': '536',  // Home & Garden
+        'Bags': '5181',   // Luggage & Bags
+        'Hardware': '632',
+        'Religious': '5605', // Religious & Ceremonial
+        'Software': '2092',
+        'Media': '783'
+      };
+
+      attributes.google_product_category = categoryMap[subcategory] || '166'; // Default to Apparel & Accessories
+    } else {
+      // Default to Apparel & Accessories if no subcategory found
+      attributes.google_product_category = '166';
+    }
     
     // Combine all text fields for analysis
     const combinedText = `${title} ${tags} ${product_type}`.toLowerCase();
-    
-    // Detect product category (simplified approach - would be more sophisticated in production)
-    if (product_type) {
-      // Use product_type as the primary source for category
-      attributes.google_product_category = this.mapToGoogleCategory(product_type);
-    } else if (combinedText.includes('shirt') || combinedText.includes('tshirt') || combinedText.includes('t-shirt')) {
-      attributes.google_product_category = 'Apparel & Accessories > Clothing > Shirts & Tops';
-    } else if (combinedText.includes('pants') || combinedText.includes('trouser')) {
-      attributes.google_product_category = 'Apparel & Accessories > Clothing > Pants';
-    } else if (combinedText.includes('shoe') || combinedText.includes('sneaker') || combinedText.includes('footwear')) {
-      attributes.google_product_category = 'Apparel & Accessories > Shoes';
-    } else if (combinedText.includes('jacket') || combinedText.includes('coat')) {
-      attributes.google_product_category = 'Apparel & Accessories > Clothing > Outerwear';
-    } else if (combinedText.includes('dress')) {
-      attributes.google_product_category = 'Apparel & Accessories > Clothing > Dresses';
-    } else {
-      attributes.google_product_category = 'Apparel & Accessories > Clothing';
-    }
     
     // Detect color
     const colors = ['red', 'blue', 'green', 'yellow', 'black', 'white', 'purple', 'orange', 'pink', 'brown', 'gray', 'grey'];
@@ -712,61 +736,6 @@ export class ProductService {
     }
     
     return attributes;
-  }
-  
-  // Map product type to Google product category
-  private mapToGoogleCategory(productType: string): string {
-    const typeMap: Record<string, string> = {
-      'shirt': 'Apparel & Accessories > Clothing > Shirts & Tops',
-      't-shirt': 'Apparel & Accessories > Clothing > Shirts & Tops',
-      'tshirt': 'Apparel & Accessories > Clothing > Shirts & Tops',
-      'pants': 'Apparel & Accessories > Clothing > Pants',
-      'jeans': 'Apparel & Accessories > Clothing > Pants > Jeans',
-      'shorts': 'Apparel & Accessories > Clothing > Shorts',
-      'dress': 'Apparel & Accessories > Clothing > Dresses',
-      'skirt': 'Apparel & Accessories > Clothing > Skirts',
-      'jacket': 'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      'coat': 'Apparel & Accessories > Clothing > Outerwear > Coats',
-      'sweater': 'Apparel & Accessories > Clothing > Sweaters',
-      'hoodie': 'Apparel & Accessories > Clothing > Hoodies & Sweatshirts',
-      'sweatshirt': 'Apparel & Accessories > Clothing > Hoodies & Sweatshirts',
-      'shoes': 'Apparel & Accessories > Shoes',
-      'sneakers': 'Apparel & Accessories > Shoes > Athletic Shoes',
-      'boots': 'Apparel & Accessories > Shoes > Boots',
-      'sandals': 'Apparel & Accessories > Shoes > Sandals',
-      'hat': 'Apparel & Accessories > Clothing Accessories > Hats',
-      'cap': 'Apparel & Accessories > Clothing Accessories > Hats',
-      'scarf': 'Apparel & Accessories > Clothing Accessories > Scarves & Shawls',
-      'socks': 'Apparel & Accessories > Clothing Accessories > Socks',
-      'belt': 'Apparel & Accessories > Clothing Accessories > Belts',
-      'bag': 'Apparel & Accessories > Handbags, Wallets & Cases > Handbags',
-      'purse': 'Apparel & Accessories > Handbags, Wallets & Cases > Handbags',
-      'backpack': 'Apparel & Accessories > Handbags, Wallets & Cases > Backpacks',
-      'wallet': 'Apparel & Accessories > Handbags, Wallets & Cases > Wallets & Money Clips',
-      'jewelry': 'Apparel & Accessories > Jewelry',
-      'necklace': 'Apparel & Accessories > Jewelry > Necklaces',
-      'bracelet': 'Apparel & Accessories > Jewelry > Bracelets',
-      'earrings': 'Apparel & Accessories > Jewelry > Earrings',
-      'ring': 'Apparel & Accessories > Jewelry > Rings',
-      'watch': 'Apparel & Accessories > Jewelry > Watches'
-    };
-    
-    const lowerType = productType.toLowerCase();
-    
-    // Check for direct matches first
-    if (typeMap[lowerType]) {
-      return typeMap[lowerType];
-    }
-    
-    // Check if the product type contains any of our known types
-    for (const [key, google_product_category] of Object.entries(typeMap)) {
-      if (lowerType.includes(key)) {
-        return google_product_category;
-      }
-    }
-    
-    // Default fallback
-    return 'Apparel & Accessories > Clothing';
   }
 
   // Helper method to normalize size
@@ -974,4 +943,4 @@ export class ProductService {
       throw new Error(`Failed to preview Google attributes: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
-} 
+}
