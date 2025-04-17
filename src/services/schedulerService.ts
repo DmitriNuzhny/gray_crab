@@ -49,6 +49,12 @@ export class SchedulerService {
     }
   }
 
+  private extractNumericId(gid: string): string {
+    // Extract the numeric ID from a GID like 'gid://shopify/Product/123456789'
+    const match = gid.match(/\/(\d+)$/);
+    return match ? match[1] : gid;
+  }
+
   /**
    * Process newly created products and update their sales channels
    */
@@ -72,6 +78,13 @@ export class SchedulerService {
                 title
                 vendor
                 createdAt
+                variants(first: 1) {
+                  edges {
+                    node {
+                      id
+                    }
+                  }
+                }
               }
             }
           }
@@ -107,17 +120,6 @@ export class SchedulerService {
         });
       }
 
-      // Extract product IDs and ensure they're in the correct format
-      const productIds = products.map((product: any) => {
-        // Check if the ID already has the gid://shopify/Product/ prefix
-        if (product.id.startsWith('gid://shopify/Product/')) {
-          return product.id;
-        } else {
-          // If not, add the prefix
-          return `gid://shopify/Product/${product.id}`;
-        }
-      });
-
       // Group products by vendor
       const grayCrabProducts = products.filter((product: { vendor: string }) => 
         product.vendor === 'the gray crab' || product.vendor === 'THE GRAY CRAB'
@@ -126,32 +128,59 @@ export class SchedulerService {
         product.vendor !== 'the gray crab' && product.vendor !== 'THE GRAY CRAB'
       );
 
-      // Update sales channels based on vendor
+      // Update Gray Crab products
       if (grayCrabProducts.length > 0) {
-        const grayCrabProductIds = grayCrabProducts.map((product: { id: string }) => product.id);
-        console.log(`Updating ${grayCrabProducts.length} Gray Crab products with all sales channels`);
+        const grayCrabProductIds = grayCrabProducts.map((product: { id: string }) => 
+          this.extractNumericId(product.id)
+        );
+        console.log(`Updating ${grayCrabProducts.length} Gray Crab products with all sales channels and Google attributes`);
+        
+        // Update sales channels
         const grayCrabSalesChannels = ['Online Store', 'Google & YouTube', 'TikTok', 'Faire: Sell Wholesale'];
-        const grayCrabResult = await this.productService.bulkUpdateSalesChannels({
+        const grayCrabSalesResult = await this.productService.bulkUpdateSalesChannels({
           productIds: grayCrabProductIds,
           salesChannels: grayCrabSalesChannels
         });
-        console.log(`Successfully updated ${grayCrabResult.updatedProducts?.length || 0} Gray Crab products`);
-        if (grayCrabResult.failedProducts?.length) {
-          console.warn(`Failed to update ${grayCrabResult.failedProducts.length} Gray Crab products`);
+        console.log(`Successfully updated sales channels for ${grayCrabSalesResult.updatedProducts?.length || 0} Gray Crab products`);
+        if (grayCrabSalesResult.failedProducts?.length) {
+          console.warn(`Failed to update sales channels for ${grayCrabSalesResult.failedProducts.length} Gray Crab products`);
+        }
+
+        // Update Google attributes
+        const grayCrabAttributesResult = await this.productService.autoUpdateGoogleAttributes(
+          grayCrabProductIds
+        );
+        console.log(`Successfully updated Google attributes for ${grayCrabAttributesResult.updatedProducts?.length || 0} Gray Crab products`);
+        if (grayCrabAttributesResult.failedProducts?.length) {
+          console.warn(`Failed to update Google attributes for ${grayCrabAttributesResult.failedProducts.length} Gray Crab products`);
         }
       }
 
+      // Update other products
       if (otherProducts.length > 0) {
-        const otherProductIds = otherProducts.map((product: { id: string }) => product.id);
-        console.log(`Updating ${otherProducts.length} other products with standard sales channels`);
+        const otherProductIds = otherProducts.map((product: { id: string }) => 
+          this.extractNumericId(product.id)
+        );
+        console.log(`Updating ${otherProducts.length} other products with standard sales channels and Google attributes`);
+        
+        // Update sales channels
         const standardSalesChannels = ['Online Store', 'Google & YouTube', 'TikTok'];
-        const otherResult = await this.productService.bulkUpdateSalesChannels({
+        const otherSalesResult = await this.productService.bulkUpdateSalesChannels({
           productIds: otherProductIds,
           salesChannels: standardSalesChannels
         });
-        console.log(`Successfully updated ${otherResult.updatedProducts?.length || 0} other products`);
-        if (otherResult.failedProducts?.length) {
-          console.warn(`Failed to update ${otherResult.failedProducts.length} other products`);
+        console.log(`Successfully updated sales channels for ${otherSalesResult.updatedProducts?.length || 0} other products`);
+        if (otherSalesResult.failedProducts?.length) {
+          console.warn(`Failed to update sales channels for ${otherSalesResult.failedProducts.length} other products`);
+        }
+
+        // Update Google attributes
+        const otherAttributesResult = await this.productService.autoUpdateGoogleAttributes(
+          otherProductIds
+        );
+        console.log(`Successfully updated Google attributes for ${otherAttributesResult.updatedProducts?.length || 0} other products`);
+        if (otherAttributesResult.failedProducts?.length) {
+          console.warn(`Failed to update Google attributes for ${otherAttributesResult.failedProducts.length} other products`);
         }
       }
 
