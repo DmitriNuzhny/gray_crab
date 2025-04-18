@@ -614,15 +614,20 @@ export class ProductService {
     
     // Get the product title and any existing metadata
     const title = product.title || '';
-    const tags = Array.isArray(product.tags) ? product.tags.join(' ') : (product.tags || '');
-    const product_type = product.product_type || '';
-
-    // Look for Subcategory tag
     let subcategory = '';
+    // Handle both array and string cases for tags
+    let tagsArray: string[] = [];
     if (Array.isArray(product.tags)) {
-      const subcategoryTag = product.tags.find(tag => tag.startsWith('Subcategory-'));
+      tagsArray = product.tags;
+    } else if (typeof product.tags === 'string') {
+      // Split string tags by comma and trim whitespace
+      tagsArray = product.tags.split(',').map(tag => tag.trim());
+    }
+    
+    if (tagsArray.length > 0) {
+      const subcategoryTag = tagsArray.find(tag => tag.includes('Category-'));
       if (subcategoryTag) {
-        subcategory = subcategoryTag.replace('Subcategory-', '');
+        subcategory = subcategoryTag.replace('Category-', '');
       }
     }
 
@@ -660,7 +665,7 @@ export class ProductService {
     }
     
     // Combine all text fields for analysis
-    const combinedText = `${title} ${tags} ${product_type}`.toLowerCase();
+    const combinedText = `${title} ${tagsArray.join(' ')}`.toLowerCase();
     
     // Detect color
     const colors = ['red', 'blue', 'green', 'yellow', 'black', 'white', 'purple', 'orange', 'pink', 'brown', 'gray', 'grey'];
