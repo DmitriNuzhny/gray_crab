@@ -21,10 +21,10 @@ app.use('/api/webhooks', webhookRoutes);
 
 // Initialize scheduler service - only in non-serverless environments
 // This prevents the scheduler from running in Vercel's serverless functions
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  const schedulerService = new SchedulerService();
-  schedulerService.startNewProductsScheduler();
-}
+// if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+//   const schedulerService = new SchedulerService();
+//   schedulerService.startNewProductsScheduler();
+// }
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
