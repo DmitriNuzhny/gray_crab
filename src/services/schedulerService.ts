@@ -29,9 +29,9 @@ export class SchedulerService {
       console.error('Error in initial run of new products scheduler:', error);
     });
 
-    // Then schedule to run every 30 minutes using node-cron
-    // Cron expression: "*/30 * * * *" means "every 30 minutes"
-    this.cronJob = cron.schedule('*/30 * * * *', () => {
+    // Then schedule to run every 60 minutes using node-cron
+    // Cron expression: "*/60 * * * *" means "every 60 minutes"
+    this.cronJob = cron.schedule('*/60 * * * *', () => {
       this.processNewProducts().catch(error => {
         console.error('Error in scheduled run of new products scheduler:', error);
       });
